@@ -1,0 +1,29 @@
+# Virtual environment
+.venv/
+venv/
+
+# Python caches / build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+
+# App runtime data (lives in %APPDATA%\sniplingo, never in the repo — listed only as a guard)
+config.json
+*.argosmodel
