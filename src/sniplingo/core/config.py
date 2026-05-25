@@ -30,6 +30,8 @@ class AppConfig:
     region: Region | None = None
     overlay_opacity: float = 0.85
     overlay_position: tuple[int, int] | None = None
+    capture_padding: int = 8  # extra pixels grabbed around the selection so OCR keeps a margin
+    ocr_scale: int = 2  # upscale factor applied before OCR; helps small/low-contrast text
 
     @property
     def has_deepl(self) -> bool:
@@ -46,6 +48,8 @@ class AppConfig:
             "region": _region_to_dict(self.region),
             "overlay_opacity": self.overlay_opacity,
             "overlay_position": list(self.overlay_position) if self.overlay_position else None,
+            "capture_padding": self.capture_padding,
+            "ocr_scale": self.ocr_scale,
         }
 
     def redacted(self) -> dict[str, Any]:
@@ -72,6 +76,8 @@ class AppConfig:
             region=_region_from_dict(data.get("region")),
             overlay_opacity=_as_float(data, "overlay_opacity", d.overlay_opacity),
             overlay_position=_position_from_value(data.get("overlay_position")),
+            capture_padding=_as_int(data, "capture_padding", d.capture_padding),
+            ocr_scale=_as_int(data, "ocr_scale", d.ocr_scale),
         )
 
 
@@ -116,6 +122,13 @@ def _as_optional_str(data: dict[str, Any], key: str) -> str | None:
 def _as_bool(data: dict[str, Any], key: str, default: bool) -> bool:
     value = data.get(key, default)
     return value if isinstance(value, bool) else default
+
+
+def _as_int(data: dict[str, Any], key: str, default: int) -> int:
+    value = data.get(key, default)
+    if isinstance(value, bool):  # bool is an int subclass; reject it explicitly
+        return default
+    return value if isinstance(value, int) else default
 
 
 def _as_float(data: dict[str, Any], key: str, default: float) -> float:
