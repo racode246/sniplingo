@@ -27,3 +27,5 @@ Thumbs.db
 # App runtime data (lives in %APPDATA%\sniplingo, never in the repo — listed only as a guard)
 config.json
 *.argosmodel
+
+settings.local.json
