@@ -6,7 +6,7 @@ negative on multi-monitor setups) to produce global coords that `mss` understand
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, Qt, Signal
+from PySide6.QtCore import QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
@@ -61,18 +61,27 @@ class RegionSelector(QWidget):
         )
         self._origin = None
         self._current = None
-        self.hide()
-        if region.is_empty:
-            self.cancelled.emit()
-        else:
-            self.selected.emit(region)
+        self._dismiss(region)
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         if event.key() == Qt.Key.Key_Escape:
             self._origin = None
             self._current = None
-            self.hide()
-            self.cancelled.emit()
+            self._dismiss(None)
+
+    def _dismiss(self, region) -> None:
+        """Hide the overlay, then emit the outcome on the next event-loop tick.
+
+        Emitting synchronously would run the (blocking) pipeline submit / config save
+        before the dim overlay is repainted away, leaving it stuck on screen until the
+        next click. Deferring lets the hide take visual effect — and ensures the capture
+        runs after the overlay is gone, so it isn't dimmed or fenced by the selection box.
+        """
+        self.hide()
+        if region is None or region.is_empty:
+            QTimer.singleShot(0, self.cancelled.emit)
+        else:
+            QTimer.singleShot(0, lambda: self.selected.emit(region))
 
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)

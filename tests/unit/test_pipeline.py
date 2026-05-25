@@ -9,12 +9,14 @@ def test_happy_path_capture_ocr_postprocess_translate():
     capturer = FakeCapturer(image)
     ocr = FakeOcr(OcrResult(lines=(OcrLine("Save your"), OcrLine("progress?"))))
     translator = FakeTranslator(name="fake", mapping={"Save your progress?": "進行状況を保存？"})
-    pipeline = TranslationPipeline(capturer, ocr, translator, source="en", target="ja")
+    pipeline = TranslationPipeline(
+        capturer, ocr, translator, source="en", target="ja", capture_padding=0
+    )
 
     region = Region(0, 0, 100, 50)
     result = pipeline.run(region)
 
-    # capture got the region; OCR got the captured image + source language
+    # capture got the region (no padding here); OCR got the captured image + source language
     assert capturer.captured == [region]
     assert ocr.images == [image]
     assert ocr.langs == ["en"]
@@ -24,6 +26,30 @@ def test_happy_path_capture_ocr_postprocess_translate():
     assert result.translated_text == "進行状況を保存？"
     assert result.backend == "fake"
     assert result.ok
+
+
+def test_capture_region_is_padded_so_edge_text_keeps_a_quiet_zone():
+    # A selection dragged flush to the text would clip its edge glyphs; the pipeline
+    # captures a padded rectangle so Windows OCR still sees a margin around the words.
+    capturer = FakeCapturer()
+    ocr = FakeOcr(OcrResult(lines=(OcrLine("Hi"),)))
+    pipeline = TranslationPipeline(capturer, ocr, FakeTranslator(), capture_padding=4)
+
+    pipeline.run(Region(10, 10, 20, 20))
+
+    assert capturer.captured == [Region(6, 6, 28, 28)]
+
+
+def test_capture_padding_defaults_to_a_nonzero_margin():
+    capturer = FakeCapturer()
+    ocr = FakeOcr(OcrResult(lines=(OcrLine("Hi"),)))
+    pipeline = TranslationPipeline(capturer, ocr, FakeTranslator())
+
+    pipeline.run(Region(100, 100, 50, 20))
+
+    captured = capturer.captured[0]
+    assert captured.left < 100 and captured.top < 100
+    assert captured.width > 50 and captured.height > 20
 
 
 def test_empty_ocr_short_circuits_without_translating():

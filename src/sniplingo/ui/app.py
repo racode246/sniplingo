@@ -66,13 +66,14 @@ class Application(QObject):
         self._config_path = config_path
         self._region: Region | None = config.region
 
-        self._ocr = WinRtOcrEngine()
+        self._ocr = WinRtOcrEngine(scale=config.ocr_scale)
         pipeline = TranslationPipeline(
             MssCapturer(),
             self._ocr,
             build_translator_chain(config),
             source=config.source_lang,
             target=config.target_lang,
+            capture_padding=config.capture_padding,
         )
         self._runner = PipelineRunner(pipeline)
         self._overlay = OverlayWindow(config.overlay_opacity)
