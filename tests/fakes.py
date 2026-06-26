@@ -65,3 +65,30 @@ class FakeTranslator:
             target_lang=target,
             backend=self.name,
         )
+
+
+class FakeImageTranslator:
+    """An ImageTranslator that returns a canned translation per image identity."""
+
+    def __init__(
+        self,
+        name: str = "fake-vision",
+        translated_text: str = "(translated)",
+        error: Exception | None = None,
+    ) -> None:
+        self.name = name
+        self.translated_text = translated_text
+        self.error = error
+        self.calls: list[tuple[object, str, str]] = []
+
+    def translate_image(self, image: object, source: str, target: str) -> TranslationResult:
+        self.calls.append((image, source, target))
+        if self.error is not None:
+            raise self.error
+        return TranslationResult(
+            source_text="",
+            translated_text=self.translated_text,
+            source_lang=source,
+            target_lang=target,
+            backend=self.name,
+        )

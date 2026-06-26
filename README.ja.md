@@ -10,7 +10,7 @@ Windows 11 デスクトップアプリ。画面上で**範囲をドラッグ選�
 - **完全無料**（APIキー・クレジットカード不要）。
   - 既定: Google 無料エンドポイント（`deep-translator`）
   - 失敗時（レート制限/通信エラー）: 短いバックオフ後に **Argos オフライン**へ自動フォールバック
-  - DeepL は任意（キーを設定したときだけ有効）
+  - DeepL / **Gemini** は任意（キーを設定したときだけ有効。Gemini は [Google AI Studio](https://aistudio.google.com/apikey) で無料発行可）
 - OCR は Windows 標準（無料・キー不要）。英語→日本語（言語は設定で変更可能な作り）。
 - ホットキーで「押した瞬間」だけ翻訳（常時監視しない＝軽い）。
 
@@ -47,9 +47,11 @@ pip install -e ".[dev]"            # オフライン翻訳も使うなら: pip i
 |---|---|---|
 | `source_lang` / `target_lang` | `en` / `ja` | 翻訳の言語方向 |
 | `select_region_hotkey` | `<ctrl>+<alt>+r` | 範囲選択（→自動翻訳）のホットキー（pynput 形式） |
-| `default_backend` | `google_free` | `google_free` / `argos` / `deepl` |
+| `default_backend` | `google_free` | `google_free` / `argos` / `deepl` / `gemini` |
 | `enable_offline_fallback` | `true` | 失敗時に Argos へフォールバック |
 | `deepl_api_key` | `null` | 設定時のみ DeepL が有効（ログに出力されません） |
+| `gemini_api_key` | `null` | 設定時のみ Gemini が有効（ログに出力されません） |
+| `gemini_model` | `gemini-2.5-flash` | 使用する Gemini モデル名（例: `gemini-2.5-flash-lite`, `gemini-2.5-pro`） |
 | `overlay_opacity` | `0.85` | オーバーレイの不透明度（フォントは 16px 固定） |
 | `overlay_position` | `null` | オーバーレイをドラッグした位置 `[x, y]`（未設定なら範囲の下に表示） |
 

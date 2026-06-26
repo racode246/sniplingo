@@ -28,6 +28,7 @@ class Tray(QObject):
     select_region_requested = Signal()
     translate_now_requested = Signal()
     set_hotkey_requested = Signal()
+    settings_requested = Signal()
     quit_requested = Signal()
 
     def __init__(self) -> None:
@@ -39,6 +40,7 @@ class Tray(QObject):
         menu.addAction("範囲を選択して翻訳", self.select_region_requested.emit)
         menu.addAction("現在の範囲を再翻訳", self.translate_now_requested.emit)
         menu.addAction("範囲選択のショートカットを設定…", self.set_hotkey_requested.emit)
+        menu.addAction("翻訳設定…", self.settings_requested.emit)
         menu.addSeparator()
         self._status: QAction = menu.addAction("バックエンド: -")
         self._status.setEnabled(False)

@@ -27,3 +27,9 @@ Thumbs.db
 # App runtime data (lives in %APPDATA%\sniplingo, never in the repo — listed only as a guard)
 config.json
 *.argosmodel
+
+# Claude Code project-local settings (per-machine)
+.claude/settings.local.json
+
+# Local OCR fixtures used during development (out of scope for distribution)
+tests/image/

@@ -13,8 +13,11 @@ def test_defaults():
     assert c.overlay_position is None
     assert c.enable_offline_fallback is True
     assert c.deepl_api_key is None
+    assert c.gemini_api_key is None
+    assert c.gemini_model == "gemini-2.5-flash"
     assert c.region is None
     assert c.has_deepl is False
+    assert c.has_gemini is False
 
 
 def test_to_from_dict_roundtrip():
@@ -22,8 +25,10 @@ def test_to_from_dict_roundtrip():
         source_lang="en",
         target_lang="ja",
         select_region_hotkey="<ctrl>+<shift>+r",
-        default_backend="deepl",
+        default_backend="gemini",
         deepl_api_key="secret-key",
+        gemini_api_key="gemini-secret",
+        gemini_model="gemini-2.5-flash-lite",
         region=Region(10, 20, 30, 40),
         overlay_position=(120, 80),
     )
@@ -91,6 +96,31 @@ def test_redacted_masks_key():
 
 def test_redacted_without_key_is_none():
     assert AppConfig().redacted()["deepl_api_key"] is None
+
+
+def test_has_gemini():
+    assert AppConfig(gemini_api_key="x").has_gemini is True
+    assert AppConfig(gemini_api_key="").has_gemini is False
+    assert AppConfig(gemini_api_key=None).has_gemini is False
+
+
+def test_redacted_masks_gemini_key():
+    c = AppConfig(gemini_api_key="super-gemini-secret")
+    red = c.redacted()
+    assert "super-gemini-secret" not in json.dumps(red)
+    assert red["gemini_api_key"] == "****"
+
+
+def test_redacted_without_gemini_key_is_none():
+    assert AppConfig().redacted()["gemini_api_key"] is None
+
+
+def test_gemini_model_default_when_blank():
+    """A blank/invalid model string in config falls back to the default."""
+    c = AppConfig.from_dict({"gemini_model": ""})
+    assert c.gemini_model == "gemini-2.5-flash"
+    c2 = AppConfig.from_dict({"gemini_model": 123})
+    assert c2.gemini_model == "gemini-2.5-flash"
 
 
 def test_default_config_path_uses_appdata(monkeypatch, tmp_path):

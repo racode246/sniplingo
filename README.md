@@ -11,7 +11,7 @@ in-game text (borderless / windowed games — exclusive fullscreen is not suppor
 - **Completely free** (no API key, no credit card).
   - Default: Google's free endpoint (`deep-translator`).
   - On failure (rate limit / network error): a short backoff, then automatic fallback to **Argos offline**.
-  - DeepL is optional (enabled only when you set a key).
+  - DeepL / **Gemini** are optional (enabled only when you set a key; Gemini keys are free from [Google AI Studio](https://aistudio.google.com/apikey)).
 - OCR uses the built-in Windows engine (free, no key). English → Japanese (the language pair is config-driven).
 - Translation happens on demand when you pick a region — there is no continuous polling, so it stays light.
 
@@ -50,9 +50,11 @@ Settings are stored in **`%APPDATA%\SnipLingo\config.json`** (never in the repo)
 |---|---|---|
 | `source_lang` / `target_lang` | `en` / `ja` | Translation direction |
 | `select_region_hotkey` | `<ctrl>+<alt>+r` | Region-select (→ auto-translate) hotkey (pynput format) |
-| `default_backend` | `google_free` | `google_free` / `argos` / `deepl` |
+| `default_backend` | `google_free` | `google_free` / `argos` / `deepl` / `gemini` |
 | `enable_offline_fallback` | `true` | Fall back to Argos on failure |
 | `deepl_api_key` | `null` | Enables DeepL only when set (never written to logs) |
+| `gemini_api_key` | `null` | Enables Gemini only when set (never written to logs) |
+| `gemini_model` | `gemini-2.5-flash` | Gemini model name (e.g. `gemini-2.5-flash-lite`, `gemini-2.5-pro`) |
 | `overlay_opacity` | `0.85` | Overlay opacity (font is fixed at 16px) |
 | `overlay_position` | `null` | Position `[x, y]` where you dragged the overlay (anchors below the region if unset) |
 
