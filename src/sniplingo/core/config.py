@@ -2,8 +2,9 @@
 
 The config file lives in the user area (``%APPDATA%\\SnipLingo\\config.json``) and is
 treated as untrusted on load: wrong types fall back to defaults, unknown keys are
-ignored, and corrupt JSON never crashes the app. The optional DeepL key is masked
-by :meth:`AppConfig.redacted` so it never reaches logs. See ``.claude/rules/secrets.md``.
+ignored, and corrupt JSON never crashes the app. Optional API keys (DeepL / Gemini)
+are masked by :meth:`AppConfig.redacted` so they never reach logs. See
+``.claude/rules/secrets.md``.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from typing import Any
 from sniplingo.domain.models import Region
 
 _MASK = "****"
+_DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 
 @dataclass
@@ -27,6 +29,8 @@ class AppConfig:
     default_backend: str = "google_free"
     enable_offline_fallback: bool = True
     deepl_api_key: str | None = None
+    gemini_api_key: str | None = None
+    gemini_model: str = _DEFAULT_GEMINI_MODEL
     region: Region | None = None
     overlay_opacity: float = 0.85
     overlay_position: tuple[int, int] | None = None
@@ -37,6 +41,10 @@ class AppConfig:
     def has_deepl(self) -> bool:
         return bool(self.deepl_api_key)
 
+    @property
+    def has_gemini(self) -> bool:
+        return bool(self.gemini_api_key)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "source_lang": self.source_lang,
@@ -45,6 +53,8 @@ class AppConfig:
             "default_backend": self.default_backend,
             "enable_offline_fallback": self.enable_offline_fallback,
             "deepl_api_key": self.deepl_api_key,
+            "gemini_api_key": self.gemini_api_key,
+            "gemini_model": self.gemini_model,
             "region": _region_to_dict(self.region),
             "overlay_opacity": self.overlay_opacity,
             "overlay_position": list(self.overlay_position) if self.overlay_position else None,
@@ -53,9 +63,10 @@ class AppConfig:
         }
 
     def redacted(self) -> dict[str, Any]:
-        """A copy of :meth:`to_dict` safe to log: the DeepL key is masked."""
+        """A copy of :meth:`to_dict` safe to log: API keys are masked."""
         data = self.to_dict()
         data["deepl_api_key"] = _MASK if self.has_deepl else None
+        data["gemini_api_key"] = _MASK if self.has_gemini else None
         return data
 
     @classmethod
@@ -73,6 +84,8 @@ class AppConfig:
                 data, "enable_offline_fallback", d.enable_offline_fallback
             ),
             deepl_api_key=_as_optional_str(data, "deepl_api_key"),
+            gemini_api_key=_as_optional_str(data, "gemini_api_key"),
+            gemini_model=_as_nonempty_str(data, "gemini_model", d.gemini_model),
             region=_region_from_dict(data.get("region")),
             overlay_opacity=_as_float(data, "overlay_opacity", d.overlay_opacity),
             overlay_position=_position_from_value(data.get("overlay_position")),
@@ -112,6 +125,12 @@ def save_config(config: AppConfig, path: str | os.PathLike[str]) -> None:
 def _as_str(data: dict[str, Any], key: str, default: str) -> str:
     value = data.get(key, default)
     return value if isinstance(value, str) else default
+
+
+def _as_nonempty_str(data: dict[str, Any], key: str, default: str) -> str:
+    """Like :func:`_as_str` but treats blank strings as missing too."""
+    value = data.get(key, default)
+    return value if isinstance(value, str) and value.strip() else default
 
 
 def _as_optional_str(data: dict[str, Any], key: str) -> str | None:

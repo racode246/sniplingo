@@ -72,6 +72,7 @@ class BackendName(StrEnum):
     GOOGLE_FREE = "google_free"
     ARGOS = "argos"
     DEEPL = "deepl"
+    GEMINI = "gemini"
 
 
 @dataclass(frozen=True)

@@ -28,4 +28,8 @@ Thumbs.db
 config.json
 *.argosmodel
 
+# Claude Code project-local settings (per-machine)
 settings.local.json
+
+# Local OCR fixtures used during development (out of scope for distribution)
+tests/image/

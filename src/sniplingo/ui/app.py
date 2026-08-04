@@ -17,16 +17,20 @@ from PySide6.QtWidgets import QApplication, QDialog
 from sniplingo.adapters.argos_backend import ArgosTranslator
 from sniplingo.adapters.deep_translator_backend import GoogleFreeTranslator
 from sniplingo.adapters.deepl_backend import DeepLTranslator
+from sniplingo.adapters.gemini_backend import GeminiTranslator
 from sniplingo.adapters.mss_capturer import MssCapturer
 from sniplingo.adapters.winrt_ocr import WinRtOcrEngine
 from sniplingo.core.config import AppConfig, default_config_path, load_config, save_config
 from sniplingo.core.pipeline import TranslationPipeline
+from sniplingo.core.settings_update import apply_settings
 from sniplingo.core.translator_chain import TranslatorChain
 from sniplingo.domain.models import BackendName, Region
+from sniplingo.ports.image_translate import ImageTranslator
 from sniplingo.ui.hotkey import GlobalHotkey
 from sniplingo.ui.hotkey_dialog import HotkeyCaptureDialog
 from sniplingo.ui.overlay_window import OverlayWindow
 from sniplingo.ui.region_selector import RegionSelector
+from sniplingo.ui.settings_dialog import SettingsDialog
 from sniplingo.ui.tray import Tray
 from sniplingo.ui.worker import PipelineRunner
 
@@ -43,20 +47,48 @@ def _pretty_hotkey(combo: str) -> str:
 
 
 def build_translator_chain(config: AppConfig):
-    """Primary backend per config, with Argos offline fallback when enabled."""
+    """Primary backend per config, with Argos offline fallback when enabled.
+
+    Keyed backends (DeepL, Gemini) require their key in config; without the key
+    the request silently falls through to the default Google free endpoint.
+
+    When Gemini is the chosen primary AND Vision is wired up (see
+    :func:`_build_image_translator`), this text chain is the **fallback** path,
+    so we deliberately skip Gemini here — it would just hit the same rate limit
+    that the Vision call hit. Google free becomes the text primary instead.
+    """
 
     def make(name: str):
         if name == BackendName.DEEPL.value and config.has_deepl:
             return DeepLTranslator(config.deepl_api_key or "")
+        if name == BackendName.GEMINI.value and config.has_gemini:
+            return GeminiTranslator(config.gemini_api_key or "", model=config.gemini_model)
         if name == BackendName.ARGOS.value:
             return ArgosTranslator()
         return GoogleFreeTranslator()
 
-    primary = make(config.default_backend)
+    text_primary_name = config.default_backend
+    if text_primary_name == BackendName.GEMINI.value and config.has_gemini:
+        # Gemini handles the primary attempt via Vision; don't re-try it as text.
+        text_primary_name = BackendName.GOOGLE_FREE.value
+
+    primary = make(text_primary_name)
     fallbacks = []
-    if config.enable_offline_fallback and config.default_backend != BackendName.ARGOS.value:
+    if config.enable_offline_fallback and text_primary_name != BackendName.ARGOS.value:
         fallbacks.append(ArgosTranslator())
     return TranslatorChain(primary, fallbacks, retries=1, backoff_seconds=0.5)
+
+
+def _build_image_translator(config: AppConfig) -> ImageTranslator | None:
+    """Enable the Vision (image-direct) path only when Gemini is the chosen primary.
+
+    LLMs can do OCR + translation in one round-trip, which is faster and more
+    accurate than Windows OCR + text translate. The text-based :class:`TranslatorChain`
+    above still runs as a fallback if the Vision call fails.
+    """
+    if config.default_backend == BackendName.GEMINI.value and config.has_gemini:
+        return GeminiTranslator(config.gemini_api_key or "", model=config.gemini_model)
+    return None
 
 
 class Application(QObject):
@@ -67,15 +99,8 @@ class Application(QObject):
         self._region: Region | None = config.region
 
         self._ocr = WinRtOcrEngine(scale=config.ocr_scale)
-        pipeline = TranslationPipeline(
-            MssCapturer(),
-            self._ocr,
-            build_translator_chain(config),
-            source=config.source_lang,
-            target=config.target_lang,
-            capture_padding=config.capture_padding,
-        )
-        self._runner = PipelineRunner(pipeline)
+        self._capturer = MssCapturer()
+        self._runner = PipelineRunner(self._build_pipeline(config))
         self._overlay = OverlayWindow(config.overlay_opacity)
         self._selector = RegionSelector()
         self._tray = Tray()
@@ -89,11 +114,23 @@ class Application(QObject):
         self._tray.select_region_requested.connect(self._selector.start)
         self._tray.translate_now_requested.connect(self._on_translate_now)
         self._tray.set_hotkey_requested.connect(self._on_set_hotkey)
+        self._tray.settings_requested.connect(self._on_open_settings)
         self._tray.quit_requested.connect(self._quit)
         self._selector.selected.connect(self._on_region_selected)
         self._overlay.moved.connect(self._on_overlay_moved)
         self._runner.finished.connect(self._on_result)
         self._runner.failed.connect(self._on_failed)
+
+    def _build_pipeline(self, config: AppConfig) -> TranslationPipeline:
+        return TranslationPipeline(
+            self._capturer,
+            self._ocr,
+            build_translator_chain(config),
+            source=config.source_lang,
+            target=config.target_lang,
+            image_translator=_build_image_translator(config),
+            capture_padding=config.capture_padding,
+        )
 
     def start(self) -> None:
         # No startup notification on purpose. Only surface actionable problems below.
@@ -128,7 +165,10 @@ class Application(QObject):
             return
         if not result.ok:
             self._tray.set_status("失敗")
-            self._tray.notify("翻訳に失敗", "ネットワーク/バックエンドを確認してください。")
+            # Adapter-level errors carry no secrets (see `.claude/rules/secrets.md`),
+            # so it's safe to surface them — they're the fastest path to a diagnosis.
+            detail = result.error or "ネットワーク/バックエンドを確認してください。"
+            self._tray.notify("翻訳に失敗", detail)
             return
         self._tray.set_status(result.backend)
         if self._region is not None:
@@ -146,6 +186,17 @@ class Application(QObject):
     def _on_failed(self, message: str) -> None:
         self._tray.set_status("エラー")
         self._tray.notify("エラー", message)
+
+    def _on_open_settings(self) -> None:
+        dialog = SettingsDialog(self._config)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        new_config = apply_settings(self._config, dialog.form_values())
+        self._config = new_config
+        self._save_config()
+        # Rebuild the chain + pipeline so the change takes effect for the next run.
+        self._runner.set_pipeline(self._build_pipeline(new_config))
+        self._tray.notify("翻訳設定", "保存しました。次の翻訳から有効になります。")
 
     def _on_set_hotkey(self) -> None:
         self._hotkey.stop()  # don't trigger selection while capturing keys

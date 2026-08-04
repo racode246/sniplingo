@@ -30,11 +30,17 @@ class _Worker(QObject):
             return
         self.finished.emit(result)
 
+    @Slot(object)
+    def replace_pipeline(self, pipeline: TranslationPipeline) -> None:
+        # Runs on the worker thread (queued signal), so it can't race with `process`.
+        self._pipeline = pipeline
+
 
 class PipelineRunner(QObject):
     """GUI-facing facade: `submit(region)` runs the pipeline on the worker thread."""
 
     request = Signal(object)  # region -> worker
+    pipeline_changed = Signal(object)  # new TranslationPipeline -> worker
     finished = Signal(object)  # TranslationResult -> GUI
     failed = Signal(str)
 
@@ -44,12 +50,17 @@ class PipelineRunner(QObject):
         self._worker = _Worker(pipeline)
         self._worker.moveToThread(self._thread)
         self.request.connect(self._worker.process)  # cross-thread => queued
+        self.pipeline_changed.connect(self._worker.replace_pipeline)
         self._worker.finished.connect(self.finished)
         self._worker.failed.connect(self.failed)
         self._thread.start()
 
     def submit(self, region: Region) -> None:
         self.request.emit(region)
+
+    def set_pipeline(self, pipeline: TranslationPipeline) -> None:
+        """Swap the pipeline used by the worker (queued; happens between jobs)."""
+        self.pipeline_changed.emit(pipeline)
 
     def shutdown(self) -> None:
         self._thread.quit()
