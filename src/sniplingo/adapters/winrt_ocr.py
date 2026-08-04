@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+from sniplingo.adapters.image_preprocess import preprocess_for_ocr
 from sniplingo.domain.errors import OcrError, OcrLanguageUnavailableError
 from sniplingo.domain.models import OcrLine, OcrResult, OcrWord
 
@@ -18,6 +19,10 @@ if TYPE_CHECKING:
 
 
 class WinRtOcrEngine:
+    def __init__(self, scale: int = 2) -> None:
+        # Upscale factor for preprocessing; helps small/low-contrast game text.
+        self._scale = scale
+
     def is_language_available(self, lang: str) -> bool:
         from winrt.windows.globalization import Language
         from winrt.windows.media.ocr import OcrEngine
@@ -26,7 +31,7 @@ class WinRtOcrEngine:
 
     def recognize(self, image: Image, lang: str) -> OcrResult:
         engine = self._create_engine(lang)
-        bitmap = _pil_to_software_bitmap(image)
+        bitmap = _pil_to_software_bitmap(preprocess_for_ocr(image, self._scale))
 
         async def _run():
             return await engine.recognize_async(bitmap)

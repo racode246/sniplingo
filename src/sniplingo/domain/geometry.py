@@ -21,6 +21,24 @@ def region_from_points(p1: Point, p2: Point) -> Region:
     return Region(left=left, top=top, width=width, height=height)
 
 
+def pad_region(region: Region, padding: int) -> Region:
+    """Grow `region` outward by `padding` pixels on every side.
+
+    Windows OCR needs a little quiet zone around glyphs; a selection dragged flush to
+    the text clips the edge characters. Padding the capture rectangle (not the user's
+    selection) restores that margin. A non-positive `padding` is a no-op. Coordinates
+    may become negative — off-screen pixels just come back black, which OCR tolerates.
+    """
+    if padding <= 0:
+        return region
+    return Region(
+        left=region.left - padding,
+        top=region.top - padding,
+        width=region.width + 2 * padding,
+        height=region.height + 2 * padding,
+    )
+
+
 def clamp_to_bounds(region: Region, bounds: Region) -> Region:
     """Intersect `region` with `bounds`. Returns an empty region when they don't overlap."""
     left = max(region.left, bounds.left)

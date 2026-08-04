@@ -98,7 +98,7 @@ class Application(QObject):
         self._config_path = config_path
         self._region: Region | None = config.region
 
-        self._ocr = WinRtOcrEngine()
+        self._ocr = WinRtOcrEngine(scale=config.ocr_scale)
         self._capturer = MssCapturer()
         self._runner = PipelineRunner(self._build_pipeline(config))
         self._overlay = OverlayWindow(config.overlay_opacity)
@@ -129,6 +129,7 @@ class Application(QObject):
             source=config.source_lang,
             target=config.target_lang,
             image_translator=_build_image_translator(config),
+            capture_padding=config.capture_padding,
         )
 
     def start(self) -> None:

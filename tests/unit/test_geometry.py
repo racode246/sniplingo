@@ -1,6 +1,6 @@
 import pytest
 
-from sniplingo.domain.geometry import clamp_to_bounds, region_from_points
+from sniplingo.domain.geometry import clamp_to_bounds, pad_region, region_from_points
 from sniplingo.domain.models import Region
 
 
@@ -46,3 +46,24 @@ def test_clamp_no_overlap_is_empty():
     bounds = Region(0, 0, 100, 100)
     r = Region(200, 200, 50, 50)
     assert clamp_to_bounds(r, bounds).is_empty
+
+
+def test_pad_region_grows_symmetrically_on_all_sides():
+    # +8 on each side: left/top move out by 8, width/height grow by 16.
+    assert pad_region(Region(100, 50, 30, 40), 8) == Region(92, 42, 46, 56)
+
+
+def test_pad_region_zero_padding_is_unchanged():
+    r = Region(10, 20, 30, 40)
+    assert pad_region(r, 0) == r
+
+
+def test_pad_region_may_go_negative_for_edge_selections():
+    # A selection flush against the top-left of the desktop pads into negative coords;
+    # off-screen pixels come back as a black quiet zone, which OCR is happy with.
+    assert pad_region(Region(0, 0, 100, 50), 8) == Region(-8, -8, 116, 66)
+
+
+def test_pad_region_negative_padding_is_a_no_op():
+    r = Region(10, 20, 30, 40)
+    assert pad_region(r, -5) == r

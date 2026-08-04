@@ -10,12 +10,14 @@ def test_happy_path_capture_ocr_translate_single_line():
     capturer = FakeCapturer(image)
     ocr = FakeOcr(OcrResult(lines=(OcrLine("Save your progress?"),)))
     translator = FakeTranslator(name="fake", mapping={"Save your progress?": "進行状況を保存？"})
-    pipeline = TranslationPipeline(capturer, ocr, translator, source="en", target="ja")
+    pipeline = TranslationPipeline(
+        capturer, ocr, translator, source="en", target="ja", capture_padding=0
+    )
 
     region = Region(0, 0, 100, 50)
     result = pipeline.run(region)
 
-    # capture got the region; OCR got the captured image + source language
+    # capture got the region (no padding here); OCR got the captured image + source language
     assert capturer.captured == [region]
     assert ocr.images == [image]
     assert ocr.langs == ["en"]
@@ -119,6 +121,30 @@ def test_translator_error_is_surfaced_directly():
     assert result.error == "all translation backends failed"
 
 
+def test_capture_region_is_padded_so_edge_text_keeps_a_quiet_zone():
+    # A selection dragged flush to the text would clip its edge glyphs; the pipeline
+    # captures a padded rectangle so Windows OCR still sees a margin around the words.
+    capturer = FakeCapturer()
+    ocr = FakeOcr(OcrResult(lines=(OcrLine("Hi"),)))
+    pipeline = TranslationPipeline(capturer, ocr, FakeTranslator(), capture_padding=4)
+
+    pipeline.run(Region(10, 10, 20, 20))
+
+    assert capturer.captured == [Region(6, 6, 28, 28)]
+
+
+def test_capture_padding_defaults_to_a_nonzero_margin():
+    capturer = FakeCapturer()
+    ocr = FakeOcr(OcrResult(lines=(OcrLine("Hi"),)))
+    pipeline = TranslationPipeline(capturer, ocr, FakeTranslator())
+
+    pipeline.run(Region(100, 100, 50, 20))
+
+    captured = capturer.captured[0]
+    assert captured.left < 100 and captured.top < 100
+    assert captured.width > 50 and captured.height > 20
+
+
 def test_empty_ocr_short_circuits_without_translating():
     capturer = FakeCapturer()
     ocr = FakeOcr(OcrResult(lines=()))  # nothing recognized
@@ -154,7 +180,7 @@ def test_image_translator_short_circuits_ocr_and_text_translator():
     ocr = FakeOcr(OcrResult(lines=()))  # not used
     text = FakeTranslator()  # not used
     vision = FakeImageTranslator(name="gemini", translated_text="やあ世界")
-    pipeline = TranslationPipeline(capturer, ocr, text, image_translator=vision)
+    pipeline = TranslationPipeline(capturer, ocr, text, image_translator=vision, capture_padding=0)
 
     region = Region(0, 0, 100, 100)
     result = pipeline.run(region)
@@ -177,7 +203,7 @@ def test_image_translator_failure_falls_back_to_ocr_path():
     ocr = FakeOcr(OcrResult(lines=(OcrLine("Hello"),)))
     text = FakeTranslator(name="google", mapping={"Hello": "こんにちは"})
     vision = FakeImageTranslator(error=TranslationError("vision down"))
-    pipeline = TranslationPipeline(capturer, ocr, text, image_translator=vision)
+    pipeline = TranslationPipeline(capturer, ocr, text, image_translator=vision, capture_padding=0)
 
     result = pipeline.run(Region(0, 0, 10, 10))
 
@@ -187,3 +213,17 @@ def test_image_translator_failure_falls_back_to_ocr_path():
     assert result.translated_text == "こんにちは"
     assert result.backend == "google"
     assert result.ok
+
+
+def test_vision_path_also_captures_a_padded_region():
+    """Edge glyphs clipped by a flush selection hurt Vision too — pad before capture."""
+    capturer = FakeCapturer()
+    ocr = FakeOcr(OcrResult(lines=()))
+    vision = FakeImageTranslator(name="gemini", translated_text="やあ")
+    pipeline = TranslationPipeline(
+        capturer, ocr, FakeTranslator(), image_translator=vision, capture_padding=4
+    )
+
+    pipeline.run(Region(10, 10, 20, 20))
+
+    assert capturer.captured == [Region(6, 6, 28, 28)]

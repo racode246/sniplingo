@@ -18,6 +18,8 @@ def test_defaults():
     assert c.region is None
     assert c.has_deepl is False
     assert c.has_gemini is False
+    assert c.capture_padding == 8
+    assert c.ocr_scale == 2
 
 
 def test_to_from_dict_roundtrip():
@@ -33,6 +35,27 @@ def test_to_from_dict_roundtrip():
         overlay_position=(120, 80),
     )
     assert AppConfig.from_dict(c.to_dict()) == c
+
+
+def test_capture_padding_roundtrips():
+    c = AppConfig(capture_padding=12)
+    assert AppConfig.from_dict(c.to_dict()).capture_padding == 12
+
+
+def test_capture_padding_wrong_type_falls_back_to_default():
+    assert AppConfig.from_dict({"capture_padding": "lots"}).capture_padding == 8
+    # bool is an int subclass but must not be accepted as a padding value
+    assert AppConfig.from_dict({"capture_padding": True}).capture_padding == 8
+
+
+def test_ocr_scale_roundtrips():
+    c = AppConfig(ocr_scale=3)
+    assert AppConfig.from_dict(c.to_dict()).ocr_scale == 3
+
+
+def test_ocr_scale_wrong_type_falls_back_to_default():
+    assert AppConfig.from_dict({"ocr_scale": "big"}).ocr_scale == 2
+    assert AppConfig.from_dict({"ocr_scale": True}).ocr_scale == 2
 
 
 def test_overlay_position_parsing():
