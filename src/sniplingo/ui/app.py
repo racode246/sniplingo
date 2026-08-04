@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import sys
 
-from PySide6.QtCore import QObject, QRect, Qt
-from PySide6.QtWidgets import QApplication, QDialog
+from PySide6.QtCore import QLockFile, QObject, QRect, Qt
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
 from sniplingo.adapters.argos_backend import ArgosTranslator
 from sniplingo.adapters.deep_translator_backend import GoogleFreeTranslator
@@ -236,6 +236,21 @@ def run() -> int:
     app.setQuitOnLastWindowClosed(False)  # live in the tray, not tied to a window
 
     config_path = default_config_path()
+
+    # Single-instance guard. Two instances both hook the global hotkey (pynput uses a
+    # low-level keyboard hook, not RegisterHotKey), so both would show a full-screen
+    # selection overlay — only the front one gets the mouse, leaving the other's dim
+    # layer stuck on screen until it is clicked.
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    lock = QLockFile(str(config_path.parent / "sniplingo.lock"))
+    if not lock.tryLock(0):
+        QMessageBox.information(
+            None,
+            "SnipLingo",
+            "SnipLingo は既に起動しています。タスクトレイのアイコンから操作してください。",
+        )
+        return 0
+
     config = load_config(config_path)
 
     application = Application(config, config_path)
