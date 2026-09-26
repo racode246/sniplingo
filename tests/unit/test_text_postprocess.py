@@ -68,3 +68,54 @@ def test_clean_ocr_text_empty_result():
 def test_clean_ocr_lines(lines, expected):
     result = OcrResult(lines=tuple(OcrLine(text=line) for line in lines))
     assert clean_ocr_lines(result) == expected
+
+
+# --- soft-wrapped paragraphs are rejoined so a sentence reaches the translator whole ---
+
+
+@pytest.mark.parametrize(
+    "lines,expected",
+    [
+        # 行末が文の途中 + 次行が小文字始まり = 画面幅での折り返し -> 結合
+        (
+            ["Restoring save slots may also be", "corrupted. For this reason, enable backups."],
+            ["Restoring save slots may also be corrupted. For this reason, enable backups."],
+        ),
+        # 3 行以上にまたがる段落も 1 行に
+        (
+            ["Once the slot is loaded,", "character information will be", "properly updated."],
+            ["Once the slot is loaded, character information will be properly updated."],
+        ),
+        # 小文字の接続語で終わる行は、次行が大文字でも続きとみなす
+        (
+            ["Enable automatic save backups in the", "Launcher settings."],
+            ["Enable automatic save backups in the Launcher settings."],
+        ),
+        # 段落の境目 (文末 + 大文字始まり) では結合しない
+        (
+            ["in the Launcher settings.", "IMPORTANT: After restoring a backup slot"],
+            ["in the Launcher settings.", "IMPORTANT: After restoring a backup slot"],
+        ),
+        # 文末句読点の後は小文字始まりでも結合しない
+        (["Saved.", "then quit"], ["Saved.", "then quit"]),
+        # ツールチップ: 各行が独立した項目 (大文字/数字/+ 始まり) -> 結合しない
+        (
+            ["+126 to maximum Life", "+2 to Level of all Projectile Skills", "Corrupted"],
+            ["+126 to maximum Life", "+2 to Level of all Projectile Skills", "Corrupted"],
+        ),
+        (
+            ["Evasion Rating: 126", "Requires Level 60, 56 Dex", "8% increased Attack Speed"],
+            ["Evasion Rating: 126", "Requires Level 60, 56 Dex", "8% increased Attack Speed"],
+        ),
+        # スモールキャップスの全大文字 OCR は接続語でも結合しない
+        (["ADDS 2 TO", "ATTACKS"], ["ADDS 2 TO", "ATTACKS"]),
+        # ハイフン折り返しと段落結合の併用
+        (
+            ["a beauti-", "ful day and a", "quiet night"],
+            ["a beautiful day and a quiet night"],
+        ),
+    ],
+)
+def test_clean_ocr_lines_rejoins_soft_wrapped_paragraphs(lines, expected):
+    result = OcrResult(lines=tuple(OcrLine(text=line) for line in lines))
+    assert clean_ocr_lines(result) == expected
