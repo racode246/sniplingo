@@ -3,8 +3,9 @@
 Disabled unless the user supplies an API key in config (see `.claude/rules/secrets.md`).
 Authentication uses the ``x-goog-api-key`` request header (not a URL query param) so the
 key is not visible in URLs that might be echoed by ``requests`` exceptions. The key is
-never included in our own exception messages; the linked traceback (``__cause__``) is
-preserved for debugging but our message stays generic.
+never included in our own exception messages. HTTP goes through the shared
+:mod:`sniplingo.adapters.http` seam (injectable ``post``), which also classifies
+failures: 429 / 5xx are transient, other 4xx (bad key, bad model) are permanent.
 
 Two entry points:
 - :meth:`GeminiTranslator.translate` — text in, text out (implements the
@@ -18,11 +19,9 @@ from __future__ import annotations
 
 import base64
 import io
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
-import requests
-
+from sniplingo.adapters.http import HttpPost, post_json, requests_post
 from sniplingo.domain.errors import TranslationError
 from sniplingo.domain.models import BackendName, TranslationResult
 
@@ -34,15 +33,6 @@ _DEFAULT_MODEL = "gemini-2.5-flash"
 _TIMEOUT_SECONDS = 15.0
 
 
-class _Response(Protocol):
-    status_code: int
-
-    def json(self) -> Any: ...
-
-
-HttpPost = Callable[[str, dict[str, str], dict[str, Any], float], _Response]
-
-
 class GeminiTranslator:
     name = BackendName.GEMINI.value
 
@@ -50,13 +40,13 @@ class GeminiTranslator:
         self,
         api_key: str,
         model: str = _DEFAULT_MODEL,
-        http_post: HttpPost | None = None,
+        post: HttpPost = requests_post,
     ) -> None:
         if not api_key:
             raise ValueError("Gemini backend requires a non-empty API key")
         self._api_key = api_key
         self._model = model or _DEFAULT_MODEL
-        self._post = http_post or _default_post
+        self._post = post
 
     def translate(self, text: str, source: str, target: str) -> TranslationResult:
         payload = {
@@ -106,19 +96,14 @@ class GeminiTranslator:
         )
 
     def _call(self, payload: dict[str, Any]) -> Any:
-        url = f"{_API_ROOT}/{self._model}:generateContent"
-        headers = {"x-goog-api-key": self._api_key, "Content-Type": "application/json"}
-        try:
-            response = self._post(url, headers, payload, _TIMEOUT_SECONDS)
-        except requests.exceptions.RequestException as exc:
-            # Don't include exc text in our message — it can contain the request URL.
-            raise TranslationError("Gemini request failed") from exc
-        if response.status_code >= 400:
-            raise TranslationError(f"Gemini HTTP {response.status_code}")
-        try:
-            return response.json()
-        except ValueError as exc:
-            raise TranslationError("Gemini returned non-JSON response") from exc
+        return post_json(
+            self._post,
+            f"{_API_ROOT}/{self._model}:generateContent",
+            label="Gemini",
+            timeout=_TIMEOUT_SECONDS,
+            headers={"x-goog-api-key": self._api_key, "Content-Type": "application/json"},
+            json=payload,
+        )
 
 
 def _build_text_prompt(text: str, source: str, target: str) -> str:
@@ -156,9 +141,3 @@ def _image_to_png_bytes(image: Image) -> bytes:
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
-
-
-def _default_post(
-    url: str, headers: dict[str, str], payload: dict[str, Any], timeout: float
-) -> _Response:
-    return requests.post(url, headers=headers, json=payload, timeout=timeout)

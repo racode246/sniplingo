@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 
 
@@ -70,23 +70,90 @@ class BackendName(StrEnum):
     """Identifiers for the pluggable translation backends."""
 
     GOOGLE_FREE = "google_free"
-    ARGOS = "argos"
     DEEPL = "deepl"
     GEMINI = "gemini"
 
 
+class ResultStatus(StrEnum):
+    """Outcome of one translation run, as the UI needs to branch on it."""
+
+    OK = "ok"
+    NO_TEXT = "no_text"  # nothing recognized in the region — not an error
+    FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class BackendAttempt:
+    """One backend tried during a run; ``error`` is ``None`` when it succeeded."""
+
+    backend: str
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+
 @dataclass(frozen=True)
 class TranslationResult:
-    """The outcome of translating one piece of OCR text."""
+    """The outcome of translating one captured region.
+
+    ``attempts`` records every backend that was tried, in order (including a failed
+    Vision attempt before the text path), so failures and fallbacks are diagnosable.
+    """
 
     source_text: str
     translated_text: str
     source_lang: str
     target_lang: str
-    backend: str
+    backend: str | None
+    status: ResultStatus = ResultStatus.OK
     error: str | None = None
-    meta: dict[str, str] = field(default_factory=dict)
+    attempts: tuple[BackendAttempt, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.status is ResultStatus.FAILED and not self.error:
+            raise ValueError("a FAILED TranslationResult needs an error message")
 
     @property
     def ok(self) -> bool:
-        return self.error is None
+        return self.status is ResultStatus.OK
+
+    @classmethod
+    def failed(
+        cls,
+        source_text: str,
+        source_lang: str,
+        target_lang: str,
+        *,
+        error: str,
+        attempts: tuple[BackendAttempt, ...] = (),
+    ) -> TranslationResult:
+        return cls(
+            source_text=source_text,
+            translated_text="",
+            source_lang=source_lang,
+            target_lang=target_lang,
+            backend=None,
+            status=ResultStatus.FAILED,
+            error=error,
+            attempts=attempts,
+        )
+
+    @classmethod
+    def no_text(
+        cls,
+        source_lang: str,
+        target_lang: str,
+        *,
+        attempts: tuple[BackendAttempt, ...] = (),
+    ) -> TranslationResult:
+        return cls(
+            source_text="",
+            translated_text="",
+            source_lang=source_lang,
+            target_lang=target_lang,
+            backend=None,
+            status=ResultStatus.NO_TEXT,
+            attempts=attempts,
+        )

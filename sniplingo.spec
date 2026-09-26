@@ -7,10 +7,8 @@ Why this is non-trivial: most of sniplingo's heavy/native dependencies are impor
 *lazily* (inside functions) to keep the architecture boundaries clean, so PyInstaller's
 static analysis can't see them. We therefore collect them explicitly:
   - winrt.*  -> native .pyd modules for Windows OCR (collect_all)
-  - mss / PIL / deep_translator / pynput -> lazily imported, added as hidden imports
-argostranslate (offline fallback) and its heavy native deps are intentionally EXCLUDED;
-the offline backend is opt-in and would bloat the build. Install it into the venv and
-rebuild only if you want offline translation packaged.
+  - mss / PIL / pynput -> lazily imported, added as hidden imports
+Translation backends only need `requests` (imported at module level, found statically).
 """
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
@@ -25,7 +23,6 @@ hiddenimports += _w_hidden
 
 # Lazily-imported libraries PyInstaller cannot detect statically.
 hiddenimports += ["mss", "PIL.Image"]
-hiddenimports += collect_submodules("deep_translator")
 hiddenimports += collect_submodules("pynput")
 
 a = Analysis(
@@ -36,14 +33,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=[
-        "argostranslate",
-        "ctranslate2",
-        "sentencepiece",
-        "stanza",
-        "torch",
-        "tkinter",
-    ],
+    excludes=["tkinter"],
     noarchive=False,
 )
 

@@ -1,22 +1,16 @@
 import pytest
 import requests
+from tests.fakes import FakeHttpPost, FakeHttpResponse
 
 from sniplingo.adapters.gemini_backend import GeminiTranslator
-from sniplingo.domain.errors import TranslationError
+from sniplingo.domain.errors import PermanentTranslationError, TranslationError
 
 
-class _Response:
-    """Stand-in for a `requests.Response` — only the bits the adapter touches."""
-
-    def __init__(self, status_code: int = 200, payload=None, raw: str | None = None):
-        self.status_code = status_code
-        self._payload = payload
-        self._raw = raw
-
-    def json(self):
-        if self._payload is None and self._raw is not None:
-            raise ValueError("not json")
-        return self._payload
+def _post(payload=None, *, status: int = 200, invalid_json: bool = False, error=None):
+    return FakeHttpPost(
+        FakeHttpResponse(status_code=status, payload=payload, invalid_json=invalid_json),
+        error=error,
+    )
 
 
 def _ok_payload(text: str = "やあ") -> dict:
@@ -30,7 +24,8 @@ def test_requires_non_empty_api_key():
 
 def test_success_returns_translation_result():
     backend = GeminiTranslator(
-        api_key="k", http_post=lambda *a, **k: _Response(payload=_ok_payload())
+        api_key="k",
+        post=_post(_ok_payload()),
     )
     result = backend.translate("hi", "en", "ja")
     assert result.translated_text == "やあ"
@@ -40,14 +35,10 @@ def test_success_returns_translation_result():
 
 
 def test_request_targets_configured_model_and_uses_header_auth():
-    seen: dict = {}
-
-    def fake_post(url, headers, payload, timeout):
-        seen.update(url=url, headers=headers, payload=payload, timeout=timeout)
-        return _Response(payload=_ok_payload())
-
-    backend = GeminiTranslator(api_key="secret-key", model="gemini-2.5-flash", http_post=fake_post)
+    post = _post(_ok_payload())
+    backend = GeminiTranslator(api_key="secret-key", model="gemini-2.5-flash", post=post)
     backend.translate("Hello world", "en", "ja")
+    seen = {**post.last, "payload": post.last["json"]}
 
     # URL targets the chosen model and does NOT leak the API key as a query param.
     assert "gemini-2.5-flash:generateContent" in seen["url"]
@@ -64,20 +55,15 @@ def test_request_targets_configured_model_and_uses_header_auth():
 
 
 def test_default_model_is_gemini_2_5_flash():
-    seen: dict = {}
-
-    def fake_post(url, headers, payload, timeout):
-        seen["url"] = url
-        return _Response(payload=_ok_payload())
-
-    GeminiTranslator(api_key="k", http_post=fake_post).translate("hi", "en", "ja")
-    assert "gemini-2.5-flash:generateContent" in seen["url"]
+    post = _post(_ok_payload())
+    GeminiTranslator(api_key="k", post=post).translate("hi", "en", "ja")
+    assert "gemini-2.5-flash:generateContent" in post.last["url"]
 
 
 def test_http_error_becomes_translation_error_without_key_leak():
     backend = GeminiTranslator(
         api_key="super-secret-key",
-        http_post=lambda *a, **k: _Response(status_code=429, payload={"error": "rate limit"}),
+        post=_post({"error": "rate limit"}, status=429),
     )
     with pytest.raises(TranslationError) as exc_info:
         backend.translate("hi", "en", "ja")
@@ -90,7 +76,7 @@ def test_network_exception_becomes_translation_error_without_key_leak():
             "connection failed to host with key=super-secret-key"
         )
 
-    backend = GeminiTranslator(api_key="super-secret-key", http_post=boom)
+    backend = GeminiTranslator(api_key="super-secret-key", post=boom)
     with pytest.raises(TranslationError) as exc_info:
         backend.translate("hi", "en", "ja")
     # The raised exception message must not echo the key (even if the underlying
@@ -101,7 +87,7 @@ def test_network_exception_becomes_translation_error_without_key_leak():
 def test_non_json_response_becomes_translation_error():
     backend = GeminiTranslator(
         api_key="k",
-        http_post=lambda *a, **k: _Response(payload=None, raw="<html>oops</html>"),
+        post=_post(invalid_json=True),
     )
     with pytest.raises(TranslationError):
         backend.translate("hi", "en", "ja")
@@ -110,7 +96,7 @@ def test_non_json_response_becomes_translation_error():
 def test_empty_candidates_becomes_translation_error():
     backend = GeminiTranslator(
         api_key="k",
-        http_post=lambda *a, **k: _Response(payload={"candidates": []}),
+        post=_post({"candidates": []}),
     )
     with pytest.raises(TranslationError):
         backend.translate("hi", "en", "ja")
@@ -119,7 +105,7 @@ def test_empty_candidates_becomes_translation_error():
 def test_blank_text_response_becomes_translation_error():
     backend = GeminiTranslator(
         api_key="k",
-        http_post=lambda *a, **k: _Response(payload=_ok_payload(text="   ")),
+        post=_post(_ok_payload(text="   ")),
     )
     with pytest.raises(TranslationError):
         backend.translate("hi", "en", "ja")
@@ -128,7 +114,7 @@ def test_blank_text_response_becomes_translation_error():
 def test_response_text_is_stripped():
     backend = GeminiTranslator(
         api_key="k",
-        http_post=lambda *a, **k: _Response(payload=_ok_payload(text="  やあ  \n")),
+        post=_post(_ok_payload(text="  やあ  \n")),
     )
     result = backend.translate("hi", "en", "ja")
     assert result.translated_text == "やあ"
@@ -152,15 +138,11 @@ class _StubImage:
 def test_translate_image_sends_image_inline_with_prompt():
     import base64
 
-    seen: dict = {}
-
-    def fake_post(url, headers, payload, timeout):
-        seen.update(url=url, headers=headers, payload=payload)
-        return _Response(payload=_ok_payload(text="やあ世界"))
-
+    post = _post(_ok_payload(text="やあ世界"))
     img = _StubImage(payload=b"\x89PNG\r\n\x1a\nDATA")
-    backend = GeminiTranslator(api_key="k", model="gemini-2.5-flash", http_post=fake_post)
+    backend = GeminiTranslator(api_key="k", model="gemini-2.5-flash", post=post)
     result = backend.translate_image(img, "en", "ja")
+    seen = {**post.last, "payload": post.last["json"]}
 
     # Image was serialized to PNG and base64-encoded into inline_data.
     parts = seen["payload"]["contents"][0]["parts"]
@@ -183,7 +165,7 @@ def test_translate_image_sends_image_inline_with_prompt():
 def test_translate_image_http_error_becomes_translation_error_without_key_leak():
     backend = GeminiTranslator(
         api_key="super-secret-vision-key",
-        http_post=lambda *a, **k: _Response(status_code=429, payload={"error": "rate"}),
+        post=_post({"error": "rate"}, status=429),
     )
     with pytest.raises(TranslationError) as exc_info:
         backend.translate_image(_StubImage(), "en", "ja")
@@ -194,7 +176,7 @@ def test_translate_image_network_failure_is_translation_error():
     def boom(*a, **k):
         raise requests.exceptions.ConnectionError("no route")
 
-    backend = GeminiTranslator(api_key="k", http_post=boom)
+    backend = GeminiTranslator(api_key="k", post=boom)
     with pytest.raises(TranslationError):
         backend.translate_image(_StubImage(), "en", "ja")
 
@@ -202,7 +184,18 @@ def test_translate_image_network_failure_is_translation_error():
 def test_translate_image_blank_response_is_translation_error():
     backend = GeminiTranslator(
         api_key="k",
-        http_post=lambda *a, **k: _Response(payload=_ok_payload(text="")),
+        post=_post(_ok_payload(text="")),
     )
     with pytest.raises(TranslationError):
         backend.translate_image(_StubImage(), "en", "ja")
+
+
+def test_rate_limit_is_transient_but_bad_key_is_permanent():
+    limited = GeminiTranslator(api_key="k", post=_post({"error": "rate"}, status=429))
+    with pytest.raises(TranslationError) as info:
+        limited.translate("hi", "en", "ja")
+    assert not isinstance(info.value, PermanentTranslationError)
+
+    bad_key = GeminiTranslator(api_key="k", post=_post({"error": "denied"}, status=403))
+    with pytest.raises(PermanentTranslationError):
+        bad_key.translate("hi", "en", "ja")

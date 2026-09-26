@@ -1,0 +1,6 @@
+Iron Longsword
+Physical Damage: 12-24
+Attack Speed: 1.35
+Requires Level 12, 30 Str
+Adds 3 to 7 Fire Damage
++15% to Critical Strike Chance

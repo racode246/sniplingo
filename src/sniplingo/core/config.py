@@ -1,33 +1,38 @@
-"""Application configuration: a validated dataclass with JSON persistence.
+"""Application configuration: an immutable, validated dataclass with JSON persistence.
 
 The config file lives in the user area (``%APPDATA%\\SnipLingo\\config.json``) and is
-treated as untrusted on load: wrong types fall back to defaults, unknown keys are
-ignored, and corrupt JSON never crashes the app. Optional API keys (DeepL / Gemini)
-are masked by :meth:`AppConfig.redacted` so they never reach logs. See
-``.claude/rules/secrets.md``.
+treated as untrusted on load: wrong types *and* out-of-range values fall back to the
+field default, unknown keys are ignored, and corrupt JSON never crashes the app.
+Optional API keys (DeepL / Gemini) are masked by :meth:`AppConfig.redacted` so they
+never reach logs. See ``.claude/rules/secrets.md``.
+
+Serialization is driven by the field *types*: adding a field only needs the dataclass
+line (plus an entry in ``_CONSTRAINTS`` if it has a valid range). A field whose type
+has no codec fails loudly at import time.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any
+from typing import Any, get_type_hints
 
-from sniplingo.domain.models import Region
+from sniplingo.core.hotkey_parse import is_valid_hotkey
+from sniplingo.domain.models import BackendName, Region
 
 _MASK = "****"
 _DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 
-@dataclass
+@dataclass(frozen=True)
 class AppConfig:
     source_lang: str = "en"
     target_lang: str = "ja"
     select_region_hotkey: str = "<ctrl>+<alt>+r"
-    default_backend: str = "google_free"
-    enable_offline_fallback: bool = True
+    default_backend: BackendName = BackendName.GOOGLE_FREE
     deepl_api_key: str | None = None
     gemini_api_key: str | None = None
     gemini_model: str = _DEFAULT_GEMINI_MODEL
@@ -46,52 +51,39 @@ class AppConfig:
         return bool(self.gemini_api_key)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "source_lang": self.source_lang,
-            "target_lang": self.target_lang,
-            "select_region_hotkey": self.select_region_hotkey,
-            "default_backend": self.default_backend,
-            "enable_offline_fallback": self.enable_offline_fallback,
-            "deepl_api_key": self.deepl_api_key,
-            "gemini_api_key": self.gemini_api_key,
-            "gemini_model": self.gemini_model,
-            "region": _region_to_dict(self.region),
-            "overlay_opacity": self.overlay_opacity,
-            "overlay_position": list(self.overlay_position) if self.overlay_position else None,
-            "capture_padding": self.capture_padding,
-            "ocr_scale": self.ocr_scale,
-        }
+        return {f.name: _dump(getattr(self, f.name)) for f in fields(self)}
 
     def redacted(self) -> dict[str, Any]:
         """A copy of :meth:`to_dict` safe to log: API keys are masked."""
         data = self.to_dict()
-        data["deepl_api_key"] = _MASK if self.has_deepl else None
-        data["gemini_api_key"] = _MASK if self.has_gemini else None
+        for name in SECRET_FIELDS:
+            data[name] = _MASK if data[name] else None
         return data
+
+    def secrets(self) -> list[str]:
+        """The configured secret values (for log redaction)."""
+        return [value for name in SECRET_FIELDS if (value := getattr(self, name))]
 
     @classmethod
     def from_dict(cls, data: Any) -> AppConfig:
         """Build a config from untrusted data, falling back to defaults per field."""
         if not isinstance(data, dict):
             return cls()
-        d = cls()
-        return cls(
-            source_lang=_as_str(data, "source_lang", d.source_lang),
-            target_lang=_as_str(data, "target_lang", d.target_lang),
-            select_region_hotkey=_as_str(data, "select_region_hotkey", d.select_region_hotkey),
-            default_backend=_as_str(data, "default_backend", d.default_backend),
-            enable_offline_fallback=_as_bool(
-                data, "enable_offline_fallback", d.enable_offline_fallback
-            ),
-            deepl_api_key=_as_optional_str(data, "deepl_api_key"),
-            gemini_api_key=_as_optional_str(data, "gemini_api_key"),
-            gemini_model=_as_nonempty_str(data, "gemini_model", d.gemini_model),
-            region=_region_from_dict(data.get("region")),
-            overlay_opacity=_as_float(data, "overlay_opacity", d.overlay_opacity),
-            overlay_position=_position_from_value(data.get("overlay_position")),
-            capture_padding=_as_int(data, "capture_padding", d.capture_padding),
-            ocr_scale=_as_int(data, "ocr_scale", d.ocr_scale),
-        )
+        values: dict[str, Any] = {}
+        for f in fields(cls):
+            if f.name not in data:
+                continue
+            value = _CODECS[_FIELD_TYPES[f.name]](data[f.name])
+            if value is _INVALID:
+                continue
+            check = _CONSTRAINTS.get(f.name)
+            if check is not None and not check(value):
+                continue
+            values[f.name] = value
+        return cls(**values)
+
+
+SECRET_FIELDS: tuple[str, ...] = ("deepl_api_key", "gemini_api_key")
 
 
 def default_config_path() -> Path:
@@ -119,73 +111,105 @@ def save_config(config: AppConfig, path: str | os.PathLike[str]) -> None:
     target.write_text(json.dumps(config.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-# --- internal type-safe extractors -------------------------------------------------
+# --- per-type codecs ---------------------------------------------------------------
+
+_INVALID = object()  # sentinel: the raw value can't be converted to the field type
 
 
-def _as_str(data: dict[str, Any], key: str, default: str) -> str:
-    value = data.get(key, default)
-    return value if isinstance(value, str) else default
+def _parse_str(raw: Any) -> Any:
+    return raw if isinstance(raw, str) else _INVALID
 
 
-def _as_nonempty_str(data: dict[str, Any], key: str, default: str) -> str:
-    """Like :func:`_as_str` but treats blank strings as missing too."""
-    value = data.get(key, default)
-    return value if isinstance(value, str) and value.strip() else default
+def _parse_optional_str(raw: Any) -> Any:
+    return raw if raw is None or isinstance(raw, str) else _INVALID
 
 
-def _as_optional_str(data: dict[str, Any], key: str) -> str | None:
-    value = data.get(key)
-    return value if isinstance(value, str) else None
+def _parse_bool(raw: Any) -> Any:
+    return raw if isinstance(raw, bool) else _INVALID
 
 
-def _as_bool(data: dict[str, Any], key: str, default: bool) -> bool:
-    value = data.get(key, default)
-    return value if isinstance(value, bool) else default
+def _parse_int(raw: Any) -> Any:
+    # bool is an int subclass; reject it explicitly
+    return raw if isinstance(raw, int) and not isinstance(raw, bool) else _INVALID
 
 
-def _as_int(data: dict[str, Any], key: str, default: int) -> int:
-    value = data.get(key, default)
-    if isinstance(value, bool):  # bool is an int subclass; reject it explicitly
-        return default
-    return value if isinstance(value, int) else default
+def _parse_float(raw: Any) -> Any:
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return _INVALID
+    return float(raw)
 
 
-def _as_float(data: dict[str, Any], key: str, default: float) -> float:
-    value = data.get(key, default)
-    if isinstance(value, bool):
-        return default
-    return float(value) if isinstance(value, (int, float)) else default
+def _parse_backend(raw: Any) -> Any:
+    try:
+        return BackendName(raw)
+    except ValueError:
+        return _INVALID
 
 
-def _region_to_dict(region: Region | None) -> dict[str, int] | None:
-    if region is None:
+def _parse_region(raw: Any) -> Any:
+    if raw is None:
         return None
-    return {
-        "left": region.left,
-        "top": region.top,
-        "width": region.width,
-        "height": region.height,
-    }
-
-
-def _position_from_value(value: Any) -> tuple[int, int] | None:
-    if isinstance(value, (list, tuple)) and len(value) == 2:
-        try:
-            return (int(value[0]), int(value[1]))
-        except (TypeError, ValueError):
-            return None
-    return None
-
-
-def _region_from_dict(value: Any) -> Region | None:
-    if not isinstance(value, dict):
-        return None
+    if not isinstance(raw, dict):
+        return _INVALID
     try:
         return Region(
-            left=int(value["left"]),
-            top=int(value["top"]),
-            width=int(value["width"]),
-            height=int(value["height"]),
+            left=int(raw["left"]),
+            top=int(raw["top"]),
+            width=int(raw["width"]),
+            height=int(raw["height"]),
         )
     except (KeyError, TypeError, ValueError):
+        return _INVALID
+
+
+def _parse_position(raw: Any) -> Any:
+    if raw is None:
         return None
+    if isinstance(raw, (list, tuple)) and len(raw) == 2:
+        try:
+            return (int(raw[0]), int(raw[1]))
+        except (TypeError, ValueError):
+            return _INVALID
+    return _INVALID
+
+
+def _dump(value: Any) -> Any:
+    if isinstance(value, Region):
+        return {"left": value.left, "top": value.top, "width": value.width, "height": value.height}
+    if isinstance(value, tuple):
+        return list(value)
+    return value
+
+
+_CODECS: dict[Any, Callable[[Any], Any]] = {
+    str: _parse_str,
+    str | None: _parse_optional_str,
+    bool: _parse_bool,
+    int: _parse_int,
+    float: _parse_float,
+    BackendName: _parse_backend,
+    Region | None: _parse_region,
+    tuple[int, int] | None: _parse_position,
+}
+
+
+def _nonblank(value: str) -> bool:
+    return bool(value.strip())
+
+
+# Valid ranges for fields whose type alone is not enough.
+_CONSTRAINTS: dict[str, Callable[[Any], bool]] = {
+    "source_lang": _nonblank,
+    "target_lang": _nonblank,
+    "gemini_model": _nonblank,
+    "select_region_hotkey": is_valid_hotkey,
+    "region": lambda region: region is None or not region.is_empty,
+    "overlay_opacity": lambda v: 0.1 <= v <= 1.0,
+    "capture_padding": lambda v: 0 <= v <= 64,
+    "ocr_scale": lambda v: 1 <= v <= 4,
+}
+
+_FIELD_TYPES: dict[str, Any] = get_type_hints(AppConfig)
+_missing = {name for name, tp in _FIELD_TYPES.items() if tp not in _CODECS}
+if _missing:  # pragma: no cover - guards future edits
+    raise TypeError(f"AppConfig fields without a codec: {sorted(_missing)}")

@@ -1,8 +1,22 @@
+import logging
+
 from tests.fakes import FakeCapturer, FakeImageTranslator, FakeOcr, FakeTranslator
 
 from sniplingo.core.pipeline import TranslationPipeline
-from sniplingo.domain.errors import TranslationError
-from sniplingo.domain.models import OcrLine, OcrResult, Region
+from sniplingo.domain.errors import (
+    CaptureError,
+    OcrError,
+    OcrLanguageUnavailableError,
+    TranslationError,
+)
+from sniplingo.domain.models import (
+    BackendAttempt,
+    OcrLine,
+    OcrResult,
+    Region,
+    ResultStatus,
+    TranslationResult,
+)
 
 
 def test_happy_path_capture_ocr_translate_single_line():
@@ -98,15 +112,8 @@ def test_translator_error_is_surfaced_directly():
 
         def translate(self, text, source, target):
             self.calls.append((text, source, target))
-            from sniplingo.domain.models import TranslationResult
-
-            return TranslationResult(
-                source_text=text,
-                translated_text="",
-                source_lang=source,
-                target_lang=target,
-                backend="",
-                error="all translation backends failed",
+            return TranslationResult.failed(
+                text, source, target, error="all translation backends failed"
             )
 
     translator = ErrorTranslator()
@@ -156,7 +163,8 @@ def test_empty_ocr_short_circuits_without_translating():
     assert translator.calls == []  # translator must not be invoked
     assert result.source_text == ""
     assert result.translated_text == ""
-    assert result.ok is False  # nothing to show
+    assert result.status is ResultStatus.NO_TEXT  # nothing to show, but not an error
+    assert result.error is None
 
 
 def test_whitespace_only_ocr_also_short_circuits():
@@ -213,6 +221,8 @@ def test_image_translator_failure_falls_back_to_ocr_path():
     assert result.translated_text == "こんにちは"
     assert result.backend == "google"
     assert result.ok
+    # The swallowed Vision failure is still visible in the result.
+    assert result.attempts[0] == BackendAttempt("fake-vision:vision", "vision down")
 
 
 def test_vision_path_also_captures_a_padded_region():
@@ -227,3 +237,75 @@ def test_vision_path_also_captures_a_padded_region():
     pipeline.run(Region(10, 10, 20, 20))
 
     assert capturer.captured == [Region(6, 6, 28, 28)]
+
+
+def test_successful_vision_attempt_is_recorded():
+    vision = FakeImageTranslator(name="gemini", translated_text="やあ")
+    pipeline = TranslationPipeline(
+        FakeCapturer(), FakeOcr(OcrResult()), FakeTranslator(), image_translator=vision
+    )
+
+    result = pipeline.run(Region(0, 0, 10, 10))
+
+    assert result.attempts == (BackendAttempt("gemini:vision"),)
+
+
+def test_vision_failure_is_logged(caplog):
+    vision = FakeImageTranslator(name="gemini", error=TranslationError("HTTP 429"))
+    ocr = FakeOcr(OcrResult(lines=(OcrLine("Hello"),)))
+    pipeline = TranslationPipeline(FakeCapturer(), ocr, FakeTranslator(), image_translator=vision)
+
+    with caplog.at_level(logging.WARNING, logger="sniplingo"):
+        pipeline.run(Region(0, 0, 10, 10))
+
+    assert any("HTTP 429" in r.getMessage() for r in caplog.records)
+
+
+def test_vision_failure_then_no_text_keeps_the_vision_attempt():
+    vision = FakeImageTranslator(name="gemini", error=TranslationError("HTTP 429"))
+    pipeline = TranslationPipeline(
+        FakeCapturer(), FakeOcr(OcrResult()), FakeTranslator(), image_translator=vision
+    )
+
+    result = pipeline.run(Region(0, 0, 10, 10))
+
+    assert result.status is ResultStatus.NO_TEXT
+    assert result.attempts == (BackendAttempt("gemini:vision", "HTTP 429"),)
+
+
+# --- capture / OCR failures become FAILED results (not crashes) --------------------
+
+
+def test_capture_error_becomes_failed_result():
+    capturer = FakeCapturer(error=CaptureError("screen capture failed"))
+    ocr = FakeOcr(OcrResult(lines=(OcrLine("Hi"),)))
+    translator = FakeTranslator()
+    pipeline = TranslationPipeline(capturer, ocr, translator)
+
+    result = pipeline.run(Region(0, 0, 10, 10))
+
+    assert result.status is ResultStatus.FAILED
+    assert "screen capture failed" in result.error
+    assert ocr.images == [] and translator.calls == []
+
+
+def test_ocr_error_becomes_failed_result():
+    ocr = FakeOcr(OcrResult(), error=OcrError("OCR recognition failed"))
+    translator = FakeTranslator()
+    pipeline = TranslationPipeline(FakeCapturer(), ocr, translator)
+
+    result = pipeline.run(Region(0, 0, 10, 10))
+
+    assert result.status is ResultStatus.FAILED
+    assert "OCR recognition failed" in result.error
+    assert translator.calls == []
+
+
+def test_missing_ocr_language_pack_message_reaches_the_result():
+    ocr = FakeOcr(OcrResult(), error=OcrLanguageUnavailableError("install the en pack"))
+    pipeline = TranslationPipeline(FakeCapturer(), ocr, FakeTranslator())
+
+    result = pipeline.run(Region(0, 0, 10, 10))
+
+    assert result.status is ResultStatus.FAILED
+    assert "install the en pack" in result.error

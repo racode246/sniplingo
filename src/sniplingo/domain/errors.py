@@ -23,5 +23,13 @@ class OcrLanguageUnavailableError(OcrError):
 class TranslationError(SnipLingoError):
     """A translation backend failed (rate limit, network, no result, ...).
 
-    The translator chain treats this as recoverable and falls back to the next backend.
+    The translator chain treats this as transient: it retries the same backend (with
+    backoff) and then falls back to the next one.
+    """
+
+
+class PermanentTranslationError(TranslationError):
+    """A failure that retrying the same backend cannot fix (bad key, quota, bad request).
+
+    The chain skips any remaining retries for that backend and moves on immediately.
     """

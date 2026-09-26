@@ -25,6 +25,12 @@ _WRAP_HYPHEN = re.compile(r"\w-$")
 # minus signs ("-2 to ...") and trailing wrap hyphens survive for later handling.
 _EDGE_NOISE = " \t_=~|"
 _HAS_ALNUM = re.compile(r"[A-Za-z0-9]")
+# A line ending like this closes a sentence/clause, so the next line starts a new row.
+_SENTENCE_END = re.compile(r"[.!?:;]['\")\]]*$")
+# Lowercase function words a sentence can't end on: a line ending with one continues.
+_CONNECTOR_END = re.compile(
+    r"(?<![A-Za-z])(a|an|the|to|of|and|or|but|in|on|at|by|for|with|from|as|is|are|was|were|be|that)$"
+)
 
 
 def clean_ocr_lines(result: OcrResult) -> list[str]:
@@ -32,8 +38,11 @@ def clean_ocr_lines(result: OcrResult) -> list[str]:
 
     Drops blank / decoration-only rows, strips edge noise (``_``, ``=``, ``~``,
     ``|``) and merges words wrapped across a line break (``"beauti-"`` +
-    ``"ful day"`` -> ``"beautiful day"``). The remaining lines stay separate so
-    each can be translated on its own.
+    ``"ful day"`` -> ``"beautiful day"``).
+
+    Prose soft-wrapped at the screen width is rejoined so each sentence reaches the
+    translator whole (see :func:`_continues`). Everything else — tooltip stats, menu
+    items, rows starting with a capital / digit / sign — stays one row per line.
     """
     normalized: list[str] = []
     for raw in result.line_texts:
@@ -46,9 +55,23 @@ def clean_ocr_lines(result: OcrResult) -> list[str]:
     for line in normalized:
         if merged and _WRAP_HYPHEN.search(merged[-1]):
             merged[-1] = merged[-1][:-1] + line
+        elif merged and _continues(merged[-1], line):
+            merged[-1] = f"{merged[-1]} {line}"
         else:
             merged.append(line)
     return [_WHITESPACE_RUN.sub(" ", line).strip() for line in merged]
+
+
+def _continues(previous: str, line: str) -> bool:
+    """Whether `line` is the soft-wrapped continuation of the sentence in `previous`.
+
+    Yes if `previous` ends on a lowercase function word ("... in the" / "Launcher"),
+    or if it doesn't close a sentence and `line` starts with a lowercase letter.
+    All-caps OCR (small-caps game fonts) never matches, so tooltips stay row-per-line.
+    """
+    if _CONNECTOR_END.search(previous):
+        return True
+    return not _SENTENCE_END.search(previous) and line[:1].islower()
 
 
 def join_lines(lines: Iterable[str]) -> str:

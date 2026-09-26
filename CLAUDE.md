@@ -15,7 +15,7 @@ Windows 11 デスクトップアプリ。画面上で**範囲をドラッグ選�
 ## 技術スタック
 - Python **3.12** / GUI: **PySide6** / キャプチャ: **mss** / 画像: **Pillow**
 - OCR: **PyWinRT**（`winrt-Windows.Media.Ocr` ほか namespace パッケージを直接使用。`winocr`/旧 `winrt` は使わない）
-- 翻訳: **deep-translator**（既定・Google 無料）/ **argostranslate**（オフライン・`[offline]` extra）/ DeepL（任意）
+- 翻訳: **Google 無料 `client=gtx` API**（既定・キー不要）/ DeepL API v2（任意）/ Gemini（任意・Vision 対応）。いずれも **requests** で直接呼ぶ（`adapters/http.py` の共通注入口 `HttpPost`）
 - ホットキー: **pynput**（`GlobalHotKeys`）→ Qt シグナルへブリッジ
 - テスト: **pytest** + pytest-mock + pytest-qt + pytest-cov / Lint・整形: **ruff**
 
@@ -25,14 +25,16 @@ src/sniplingo/
   domain/    純粋ロジック・型（I/O・外部ライブラリ import 禁止）
   ports/     Protocol インターフェース（テストの継ぎ目）
   core/      オーケストレーション（domain/ports のみ依存）
-  adapters/  ports の具体実装（mss/winrt/deep_translator/argos を import してよい唯一の場所）
+  adapters/  ports の具体実装（mss/winrt/PIL/requests を import してよい唯一の場所）
   ui/        PySide6・pynput（薄く・core へ委譲）
 tests/unit/         高速・外部依存なし（既定の pytest 対象）
 tests/integration/  marker 付き・既定スキップ
+tests/data/ocr/     OCR 正解コーパス（画像＋同名 .txt。local/ は git 管理外）
 ```
 依存は内向きのみ: `domain ← ports ← core ← adapters/ui`。
-`domain`/`core` は PySide6/winrt/mss/pynput/deep_translator/argostranslate/requests を import しない（`tests/unit/test_import_boundaries.py` で強制）。
-依存性はコンストラクタ注入。配線は `ui/app.py` のみ。詳細は **`.claude/rules/architecture.md`**。
+`domain`/`ports`/`core` は実行時に標準ライブラリと `sniplingo` 以外を import しない（`TYPE_CHECKING` 内の型参照のみ可）。
+層の依存方向・「adapters を import できるのは `ui/app.py` だけ」も含め `tests/unit/test_import_boundaries.py` で強制。
+依存性はコンストラクタ注入。配線は `ui/app.py` のみ（どのバックエンドをどの順で使うかは `core/backend_plan.py` が決める）。詳細は **`.claude/rules/architecture.md`**。
 
 ## 開発フロー（TDD）
 red（落ちるテスト）→ green（最小実装）→ refactor。各ユニット完了ごとに `pytest` を全緑に保つ。
@@ -47,11 +49,14 @@ pipeline/chain のテストは MagicMock ではなく **`ports` を実装した�
 # セットアップ（新規環境）
 py -3.12 -m venv .venv          # この環境の Python: C:\Users\take3\AppData\Local\Programs\Python\Python312\python.exe
 .\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"          # オフライン翻訳も使うなら: pip install -e ".[dev,offline]"
+pip install -e ".[dev]"
 
 # 検証
 .\.venv\Scripts\python.exe -m pytest -q                  # 既定 = tests/unit
 .\.venv\Scripts\python.exe -m ruff check . ; .\.venv\Scripts\python.exe -m ruff format .
+
+# OCR 正解コーパス（tests/data/ocr の全ペアを実 OCR で検証・スコア一覧表示）
+.\.venv\Scripts\python.exe -m pytest tests/integration/test_ocr_corpus_real.py -m windows_ocr
 
 # 起動
 .\.venv\Scripts\python.exe -m sniplingo.ui.main
@@ -62,13 +67,24 @@ pip install -e ".[dev]"          # オフライン翻訳も使うなら: pip ins
 
 ## exe パッケージング（PyInstaller）
 `sniplingo.spec` で one-folder ビルド（`dist\SnipLingo\SnipLingo.exe`・コンソール無し）。
-遅延 import の都合で hidden import を明示している: winrt は `collect_all("winrt")`、`mss`/`PIL.Image`/`deep_translator`/`pynput` を hiddenimports に追加。`argostranslate`(+ ctranslate2/sentencepiece/stanza/torch) は除外（オフライン翻訳を同梱したいときだけ extra 導入後に excludes を外す）。アイコンは `assets\sniplingo.ico`。
+遅延 import の都合で hidden import を明示している: winrt は `collect_all("winrt")`、`mss`/`PIL.Image`/`pynput` を hiddenimports に追加（`requests` はモジュール先頭 import なので自動検出）。アイコンは `assets\sniplingo.ico`。
 
 ## 翻訳バックエンドの挙動
-1. 既定 **Google 無料**（deep-translator・キー不要）。
-2. 失敗時（レート制限/通信エラー/結果なし）→ 短いバックオフ 1 回 → **Argos オフライン**へ自動フォールバック。
-3. **DeepL** は任意。`%APPDATA%\SnipLingo\config.json` にキーがある時のみ有効化。
+1. 既定 **Google 無料**（`translate.googleapis.com` の `client=gtx`・キー不要）。deep-translator の `GoogleTranslator` は `translate.google.com/m` をスクレイピングし IP 単位で CAPTCHA ブロック(429)されやすいため使わない。
+2. **DeepL / Gemini** は任意。`%APPDATA%\SnipLingo\config.json` にキーがある時のみ有効化。
+3. 順序は `core/backend_plan.py`: `default_backend`（キー無しなら Google）→ Google → DeepL（キー設定済みのみ）。
+   **Gemini はフォールバックにしない**（既定バックエンドに選んだときだけ使う）。
+   `gemini` が既定なら画像を直接 Gemini へ（Vision）、失敗時は Gemini を除くテキストチェーンへ。
+4. 失敗の分類（`adapters/http.py`）: 通信エラー・408/429/5xx = `TranslationError`（バックオフ 1 回リトライ）、
+   その他 4xx（キー不正 403・クォータ 456 等）= `PermanentTranslationError`（リトライせず次へ）。
+   全滅時は全バックエンドの失敗理由をまとめた FAILED 結果を返す（`TranslationResult.attempts` に全試行を記録）。
+   オフライン翻訳（Argos）は廃止済み。
 キーの扱いは **`.claude/rules/secrets.md`** を厳守（リポジトリに置かない・ログに出さない）。
+
+## ログ
+`%APPDATA%\SnipLingo\logs\sniplingo.log`（1MB×3 ローテーション、トレイ「ログフォルダを開く」）。`sniplingo.*` ロガーのみ。
+設定は `ui/logging_setup.py`（`RedactingFormatter` が設定済みキーを整形後の全文から `****` に置換）。`SNIPLINGO_LOG_LEVEL=DEBUG` で詳細。
+「翻訳に失敗する」系の調査はまずこのログを見る（バックエンドごとの試行・失敗理由・所要時間が出る）。
 
 ## OCR メモ
 - 起動時に `OcrEngine.is_language_supported(Language("en"))` を確認。無ければ管理者 PowerShell の

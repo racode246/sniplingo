@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 from sniplingo.core.config import AppConfig
+from sniplingo.domain.models import BackendName
 
 
 @dataclass(frozen=True)
@@ -22,7 +23,6 @@ class SettingsForm:
     """
 
     default_backend: str
-    enable_offline_fallback: bool
     deepl_key_input: str
     deepl_clear: bool
     gemini_key_input: str
@@ -33,8 +33,7 @@ class SettingsForm:
     def from_config(cls, config: AppConfig) -> SettingsForm:
         """Seed the form from the current config (secret inputs always start blank)."""
         return cls(
-            default_backend=config.default_backend,
-            enable_offline_fallback=config.enable_offline_fallback,
+            default_backend=config.default_backend.value,
             deepl_key_input="",
             deepl_clear=False,
             gemini_key_input="",
@@ -47,8 +46,7 @@ def apply_settings(config: AppConfig, form: SettingsForm) -> AppConfig:
     """Return a new config with the form's values applied (input is not mutated)."""
     return replace(
         config,
-        default_backend=form.default_backend,
-        enable_offline_fallback=form.enable_offline_fallback,
+        default_backend=_resolve_backend(config.default_backend, form.default_backend),
         deepl_api_key=_resolve_key(config.deepl_api_key, form.deepl_key_input, form.deepl_clear),
         gemini_api_key=_resolve_key(
             config.gemini_api_key, form.gemini_key_input, form.gemini_clear
@@ -63,3 +61,10 @@ def _resolve_key(current: str | None, typed: str, clear: bool) -> str | None:
     if typed:
         return typed
     return current
+
+
+def _resolve_backend(current: BackendName, chosen: str) -> BackendName:
+    try:
+        return BackendName(chosen)
+    except ValueError:
+        return current
