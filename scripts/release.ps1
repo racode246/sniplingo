@@ -63,6 +63,8 @@ function Resolve-Tool {
 function Set-FileVersion {
     param([string]$Path, [string]$Pattern, [string]$Replacement)
     $content = [System.IO.File]::ReadAllText($Path)
+    # Fail loudly: a silent no-op would ship mismatched versions.
+    if (-not [regex]::IsMatch($content, $Pattern)) { throw "Version pattern not found in $Path" }
     $updated = [regex]::Replace($content, $Pattern, $Replacement)
     [System.IO.File]::WriteAllText($Path, $updated, [System.Text.UTF8Encoding]::new($false))
 }
@@ -92,8 +94,9 @@ if ($existingTags -contains $tag) {
 Write-Host "==> Releasing SnipLingo $tag" -ForegroundColor Cyan
 
 # --- 1. set version -------------------------------------------------------------
-Set-FileVersion (Join-Path $root 'pyproject.toml') '(?m)^version = ".*"$' "version = `"$Version`""
-Set-FileVersion (Join-Path $root 'src\sniplingo\__init__.py') '__version__ = ".*"' "__version__ = `"$Version`""
+# No `$` anchor: with CRLF line endings `"$` never matches (the `\r` sits in between).
+Set-FileVersion (Join-Path $root 'pyproject.toml') '(?m)^version = "[^"]*"' "version = `"$Version`""
+Set-FileVersion (Join-Path $root 'src\sniplingo\__init__.py') '__version__ = "[^"]*"' "__version__ = `"$Version`""
 
 # --- 2. gate: ruff + tests ------------------------------------------------------
 if (-not $SkipTests) {
@@ -105,7 +108,9 @@ if (-not $SkipTests) {
 
 # --- 3. build + package ---------------------------------------------------------
 Write-Host "==> Building exe" -ForegroundColor Cyan
-Get-Process SnipLingo -ErrorAction SilentlyContinue | Stop-Process -Force
+# Wait for the exit too — removing dist/ right after Stop-Process hits still-locked DLLs.
+Get-Process SnipLingo -ErrorAction SilentlyContinue | Stop-Process -Force -PassThru |
+    Wait-Process -Timeout 15 -ErrorAction SilentlyContinue
 $dist = Join-Path $root 'dist'
 if (Test-Path $dist) { Remove-Item -Recurse -Force $dist }
 Invoke-Native $py @('-m', 'PyInstaller', 'sniplingo.spec', '--noconfirm', '--clean')
