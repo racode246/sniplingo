@@ -8,9 +8,9 @@ text is extracted with the built-in **Windows OCR** (English) → translated int
 in-game text (borderless / windowed games — exclusive fullscreen is not supported).
 
 ## Features
-- **Completely free** (no API key, no credit card).
-  - Default: Google's free endpoint (`translate.googleapis.com` `client=gtx`, no key).
-  - On failure: a short backoff and one retry, then automatic fallback to Google free / DeepL (if its key is set).
+- **Official APIs only.**
+  - Default: **Google Cloud Translation** (needs an API key; free for 500k characters/month — see below).
+  - On failure: a short backoff and one retry, then automatic fallback to Google Cloud / DeepL (if its key is set).
     Permanent errors (bad key, quota exceeded) skip the retry. Gemini is never used as a fallback.
   - DeepL / **Gemini** are optional (enabled only when you set a key; Gemini keys are free from [Google AI Studio](https://aistudio.google.com/apikey)).
 - OCR uses the built-in Windows engine (free, no key). English → Japanese (the language pair is config-driven).
@@ -26,6 +26,18 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 ```
+
+## Getting a Google Cloud Translation API key
+Translation uses Google's official **Cloud Translation API** (one-time setup).
+1. In the [Google Cloud Console](https://console.cloud.google.com/), create (or pick) a project.
+2. Enable **billing**. Cloud Translation is **free for the first 500,000 characters per month**; you pay only beyond that.
+3. APIs & Services → Library → enable **Cloud Translation API**.
+4. APIs & Services → Credentials → Create credentials → **API key**. Under **API restrictions**, restrict the key
+   to Cloud Translation API only, so a leaked key can't be used for anything else.
+5. In SnipLingo: tray → "翻訳設定…" (Translation settings) → paste it into **Google Cloud APIキー** → OK.
+
+The key is stored only in `%APPDATA%\SnipLingo\config.json` and is written to logs as `****`.
+To cap spending, set a daily character quota under Quotas in the Cloud Console.
 
 ## Run & usage
 ```powershell
@@ -55,7 +67,8 @@ outside the valid range fall back to the default. Main keys:
 |---|---|---|
 | `source_lang` / `target_lang` | `en` / `ja` | Translation direction |
 | `select_region_hotkey` | `<ctrl>+<alt>+r` | Region-select (→ auto-translate) hotkey (pynput format) |
-| `default_backend` | `google_free` | `google_free` / `deepl` / `gemini` (a keyed backend without its key falls back to `google_free`) |
+| `default_backend` | `google_cloud` | `google_cloud` / `deepl` / `gemini` (a backend without its key is skipped) |
+| `google_cloud_api_key` | `null` | Google Cloud Translation API key (never written to logs) |
 | `deepl_api_key` | `null` | Enables DeepL only when set (never written to logs) |
 | `gemini_api_key` | `null` | Enables Gemini only when set (never written to logs) |
 | `gemini_model` | `gemini-2.5-flash` | Gemini model name (e.g. `gemini-2.5-flash-lite`, `gemini-2.5-pro`) |
@@ -64,7 +77,7 @@ outside the valid range fall back to the default. Main keys:
 | `capture_padding` | `8` | Extra pixels captured around the selection, 0–64 (keeps OCR from clipping edge glyphs) |
 | `ocr_scale` | `2` | Upscale factor before OCR, 1–4 |
 
-**Fallback order**: `default_backend` first, then Google free → DeepL (only with a key).
+**Fallback order**: `default_backend` first, then Google Cloud → DeepL (only those with a key).
 Gemini is never a fallback — it is used only when chosen as `default_backend`.
 With `gemini` as the default, the captured image goes straight to Gemini (Vision); if that fails, the
 OCR + text chain runs without Gemini.
@@ -105,7 +118,8 @@ through the real OCR path, with a similarity score per case. See [`tests/data/oc
   Add-WindowsCapability -Online -Name "Language.OCR~~~en-US~0.0.1.0"
   ```
 - **Nothing is translated / "失敗" (failure) shown**: the notification lists every backend that was tried and why
-  it failed (details in the log — tray → "ログフォルダを開く"). Setting a DeepL key gives the chain a fallback.
+  it failed (details in the log — tray → "ログフォルダを開く"). Common causes: a wrong key (HTTP 400), or the Cloud Translation API not enabled / billing not set up
+  (HTTP 403 — Google's explanation is shown in the notification). Setting a DeepL key gives the chain a fallback.
 - **Overlay hidden behind the game**: switch the game to **borderless / windowed** mode (exclusive fullscreen is unsupported).
 - **Hotkey doesn't work**: use the tray item "範囲を選択して翻訳" instead. If another resident app grabs the keys,
   change the combo via the tray's "範囲選択のショートカットを設定…" (or `select_region_hotkey` in `config.json`).

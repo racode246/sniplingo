@@ -15,7 +15,7 @@ dependencies = [
     "mss>=9.0",
     "Pillow>=10.0",
     "pynput>=1.7",
-    "requests>=2.31",  # translation backends (Google free / DeepL / Gemini) over HTTP
+    "requests>=2.31",  # translation backends (Google Cloud / DeepL / Gemini) over HTTP
     "winrt-Windows.Media.Ocr>=3.2.1",
     "winrt-Windows.Graphics.Imaging>=3.2.1",
     "winrt-Windows.Storage.Streams>=3.2.1",
@@ -50,7 +50,7 @@ pythonpath = ["."]
 addopts = "-ra"
 markers = [
     "windows_ocr: requires the Windows OCR engine and an installed English language pack",
-    "network: requires network access (Google free endpoint)",
+    "network: requires network access (+ SNIPLINGO_GOOGLE_CLOUD_API_KEY for Cloud tests)",
     "display: requires a display / desktop session (mss capture)",
     "qt: requires a Qt environment (pytest-qt)",
 ]

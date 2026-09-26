@@ -52,13 +52,15 @@ def test_ocr_result_empty():
 
 
 def test_backend_name_values():
-    assert BackendName.GOOGLE_FREE.value == "google_free"
+    assert BackendName.GOOGLE_CLOUD.value == "google_cloud"
     assert BackendName.DEEPL.value == "deepl"
     assert BackendName.GEMINI.value == "gemini"
 
 
-def test_argos_backend_was_removed():
-    assert "argos" not in {b.value for b in BackendName}
+def test_removed_backends_are_gone():
+    values = {b.value for b in BackendName}
+    assert "argos" not in values
+    assert "google_free" not in values  # unofficial endpoint, dropped
 
 
 def test_translation_result_ok_by_default():
@@ -67,20 +69,20 @@ def test_translation_result_ok_by_default():
         translated_text="やあ",
         source_lang="en",
         target_lang="ja",
-        backend="google_free",
+        backend="google_cloud",
     )
     assert tr.error is None
     assert tr.ok is True
 
 
 def test_translation_result_status_defaults_to_ok():
-    tr = TranslationResult("hi", "やあ", "en", "ja", backend="google_free")
+    tr = TranslationResult("hi", "やあ", "en", "ja", backend="google_cloud")
     assert tr.status is ResultStatus.OK
     assert tr.attempts == ()
 
 
 def test_failed_factory_builds_a_failed_result():
-    attempts = (BackendAttempt("google_free", "HTTP 429"), BackendAttempt("gemini", "HTTP 503"))
+    attempts = (BackendAttempt("google_cloud", "HTTP 429"), BackendAttempt("gemini", "HTTP 503"))
     tr = TranslationResult.failed("hi", "en", "ja", error="all failed", attempts=attempts)
     assert tr.status is ResultStatus.FAILED
     assert tr.ok is False
@@ -112,8 +114,8 @@ def test_translation_result_is_deeply_immutable():
 
 
 def test_backend_attempt_ok_when_no_error():
-    assert BackendAttempt("google_free").ok is True
-    assert BackendAttempt("google_free", "boom").ok is False
+    assert BackendAttempt("google_cloud").ok is True
+    assert BackendAttempt("google_cloud", "boom").ok is False
 
 
 def test_permanent_translation_error_is_a_translation_error():

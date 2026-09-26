@@ -97,3 +97,13 @@ def test_malformed_or_blank_response_is_translation_error(payload):
     backend, _ = _backend(payload)
     with pytest.raises(TranslationError):
         backend.translate("hi", "en", "ja")
+
+
+def test_error_message_from_api_is_surfaced_with_key_masked():
+    backend, _ = _backend(
+        {"message": "Wrong key super-secret-key:fx"}, key="super-secret-key:fx", status=403
+    )
+    with pytest.raises(PermanentTranslationError) as info:
+        backend.translate("hi", "en", "ja")
+    assert "Wrong key" in str(info.value)
+    assert "super-secret-key" not in str(info.value)

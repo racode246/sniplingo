@@ -41,6 +41,7 @@ class DeepLTranslator:
             DEEPL_FREE_URL if self._api_key.endswith(":fx") else DEEPL_PRO_URL,
             label=_LABEL,
             timeout=_TIMEOUT_SECONDS,
+            secrets=[self._api_key],
             headers={"Authorization": f"DeepL-Auth-Key {self._api_key}"},
             json={
                 "text": [text],

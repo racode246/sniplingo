@@ -69,7 +69,7 @@ class OcrResult:
 class BackendName(StrEnum):
     """Identifiers for the pluggable translation backends."""
 
-    GOOGLE_FREE = "google_free"
+    GOOGLE_CLOUD = "google_cloud"
     DEEPL = "deepl"
     GEMINI = "gemini"
 

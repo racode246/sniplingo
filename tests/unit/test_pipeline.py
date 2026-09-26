@@ -1,5 +1,6 @@
 import logging
 
+import pytest
 from tests.fakes import FakeCapturer, FakeImageTranslator, FakeOcr, FakeTranslator
 
 from sniplingo.core.pipeline import TranslationPipeline
@@ -309,3 +310,34 @@ def test_missing_ocr_language_pack_message_reaches_the_result():
 
     assert result.status is ResultStatus.FAILED
     assert "install the en pack" in result.error
+
+
+# --- Vision-only setups (Gemini is the only configured backend) ----------------------
+
+
+def test_vision_only_pipeline_translates_without_a_text_translator():
+    vision = FakeImageTranslator(name="gemini", translated_text="やあ")
+    ocr = FakeOcr(OcrResult())
+    pipeline = TranslationPipeline(FakeCapturer(), ocr, None, image_translator=vision)
+
+    result = pipeline.run(Region(0, 0, 10, 10))
+
+    assert result.ok and result.translated_text == "やあ"
+
+
+def test_vision_only_failure_reports_the_vision_error_without_running_ocr():
+    ocr = FakeOcr(OcrResult(lines=(OcrLine("Hello"),)))
+    vision = FakeImageTranslator(name="gemini", error=TranslationError("Gemini HTTP 429"))
+    pipeline = TranslationPipeline(FakeCapturer(), ocr, None, image_translator=vision)
+
+    result = pipeline.run(Region(0, 0, 10, 10))
+
+    assert result.status is ResultStatus.FAILED
+    assert "Gemini HTTP 429" in result.error
+    assert result.attempts == (BackendAttempt("gemini:vision", "Gemini HTTP 429"),)
+    assert ocr.images == []  # no text path to feed
+
+
+def test_pipeline_needs_at_least_one_translator():
+    with pytest.raises(ValueError):
+        TranslationPipeline(FakeCapturer(), FakeOcr(OcrResult()), None)

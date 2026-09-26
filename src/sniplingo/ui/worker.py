@@ -27,7 +27,7 @@ class _Worker(QObject):
     finished = Signal(int, object, object)  # job id, Region, TranslationResult
     failed = Signal(int, str)  # job id, message (unexpected exceptions only)
 
-    def __init__(self, pipeline: TranslationPipeline, gate: LatestJobGate) -> None:
+    def __init__(self, pipeline: TranslationPipeline | None, gate: LatestJobGate) -> None:
         super().__init__()
         self._pipeline = pipeline
         self._gate = gate
@@ -36,6 +36,9 @@ class _Worker(QObject):
     def process(self, job_id: int, region: Region) -> None:
         if not self._gate.is_current(job_id):
             logger.debug("job %d skipped: superseded before it started", job_id)
+            return
+        if self._pipeline is None:  # the GUI checks first; this is a backstop
+            self.failed.emit(job_id, "翻訳バックエンドが未設定です。")
             return
         started = time.perf_counter()
         try:
@@ -55,7 +58,7 @@ class _Worker(QObject):
         self.finished.emit(job_id, region, result)
 
     @Slot(object)
-    def replace_pipeline(self, pipeline: TranslationPipeline) -> None:
+    def replace_pipeline(self, pipeline: TranslationPipeline | None) -> None:
         # Runs on the worker thread (queued signal), so it can't race with `process`.
         self._pipeline = pipeline
 
@@ -68,7 +71,7 @@ class PipelineRunner(QObject):
     finished = Signal(object, object)  # Region, TranslationResult -> GUI (current job only)
     failed = Signal(str)
 
-    def __init__(self, pipeline: TranslationPipeline) -> None:
+    def __init__(self, pipeline: TranslationPipeline | None) -> None:
         super().__init__()
         self._gate = LatestJobGate()
         self._thread = QThread()
@@ -87,7 +90,7 @@ class PipelineRunner(QObject):
         self.request.emit(job_id, region)
         return job_id
 
-    def set_pipeline(self, pipeline: TranslationPipeline) -> None:
+    def set_pipeline(self, pipeline: TranslationPipeline | None) -> None:
         """Swap the pipeline used by the worker (queued; happens between jobs)."""
         self.pipeline_changed.emit(pipeline)
 

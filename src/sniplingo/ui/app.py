@@ -23,7 +23,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 from sniplingo import __version__
 from sniplingo.adapters.deepl_backend import DeepLTranslator
 from sniplingo.adapters.gemini_backend import GeminiTranslator
-from sniplingo.adapters.google_free_backend import GoogleFreeTranslator
+from sniplingo.adapters.google_cloud_backend import GoogleCloudTranslator
 from sniplingo.adapters.mss_capturer import MssCapturer
 from sniplingo.adapters.winrt_ocr import WinRtOcrEngine
 from sniplingo.core.backend_plan import plan_backends
@@ -48,6 +48,10 @@ from sniplingo.ui.worker import PipelineRunner
 
 logger = logging.getLogger(__name__)
 
+_NOT_CONFIGURED_TITLE = "翻訳 API キーが未設定"
+_NOT_CONFIGURED_MESSAGE = (
+    "トレイの「翻訳設定…」で Google Cloud Translation の API キーを設定してください。"
+)
 _OCR_INSTALL_CMD = 'Add-WindowsCapability -Online -Name "Language.OCR~~~en-US~0.0.1.0"'
 
 
@@ -67,8 +71,8 @@ def _make_translator(name: BackendName, config: AppConfig) -> Translator:
             return DeepLTranslator(config.deepl_api_key or "")
         case BackendName.GEMINI:
             return GeminiTranslator(config.gemini_api_key or "", model=config.gemini_model)
-        case BackendName.GOOGLE_FREE:
-            return GoogleFreeTranslator()
+        case BackendName.GOOGLE_CLOUD:
+            return GoogleCloudTranslator(config.google_cloud_api_key or "")
     raise ValueError(f"unknown backend: {name}")  # pragma: no cover
 
 
@@ -83,7 +87,9 @@ class Application(QObject):
 
         self._ocr = WinRtOcrEngine(scale=config.ocr_scale)
         self._capturer = MssCapturer()
-        self._runner = PipelineRunner(self._build_pipeline(config))
+        pipeline = self._build_pipeline(config)
+        self._configured = pipeline is not None
+        self._runner = PipelineRunner(pipeline)
         self._overlay = OverlayWindow(config.overlay_opacity)
         self._selector = RegionSelector()
         self._tray = Tray()
@@ -105,13 +111,20 @@ class Application(QObject):
         self._runner.finished.connect(self._on_result)
         self._runner.failed.connect(self._on_failed)
 
-    def _build_pipeline(self, config: AppConfig) -> TranslationPipeline:
+    def _build_pipeline(self, config: AppConfig) -> TranslationPipeline | None:
+        """The pipeline for `config`, or ``None`` when no backend has its API key."""
         plan = plan_backends(config)
         logger.info("backend plan: vision=%s text=%s", plan.vision, list(plan.text))
-        chain = TranslatorChain(
-            [_make_translator(name, config) for name in plan.text],
-            retries=1,
-            backoff_seconds=0.5,
+        if plan.is_empty:
+            return None
+        chain = (
+            TranslatorChain(
+                [_make_translator(name, config) for name in plan.text],
+                retries=1,
+                backoff_seconds=0.5,
+            )
+            if plan.text
+            else None
         )
         vision = (
             GeminiTranslator(config.gemini_api_key or "", model=config.gemini_model)
@@ -135,6 +148,8 @@ class Application(QObject):
         except Exception:  # noqa: BLE001 - hotkey is optional; tray still works
             logger.exception("global hotkey registration failed")
             self._tray.notify("ホットキー登録失敗", "トレイメニューから操作してください。")
+        if not self._configured:
+            self._tray.notify(_NOT_CONFIGURED_TITLE, _NOT_CONFIGURED_MESSAGE)
         if not self._ocr.is_language_available(self._config.source_lang):
             logger.warning("OCR language pack missing for %r", self._config.source_lang)
             self._tray.notify(
@@ -146,14 +161,22 @@ class Application(QObject):
 
     def _on_region_selected(self, region: Region) -> None:
         self._update_config(region=region)
-        self._runner.submit(region)  # selecting a region translates it automatically
+        self._submit(region)  # selecting a region translates it automatically
 
     def _on_translate_now(self) -> None:
         if self._config.region is None:
             self._tray.notify("範囲が未選択", "先に「範囲を選択して翻訳」してください。")
             self._selector.start()
             return
-        self._runner.submit(self._config.region)
+        self._submit(self._config.region)
+
+    def _submit(self, region: Region) -> None:
+        if not self._configured:
+            # No API key yet: say so and open the settings instead of failing later.
+            self._tray.notify(_NOT_CONFIGURED_TITLE, _NOT_CONFIGURED_MESSAGE)
+            self._on_open_settings()
+            return
+        self._runner.submit(region)
 
     def _on_result(self, region: Region, result: TranslationResult) -> None:
         if result.status is ResultStatus.NO_TEXT:
@@ -188,7 +211,9 @@ class Application(QObject):
         self._log_formatter.set_secrets(self._config.secrets())
         logger.info("settings changed: %s", self._config.redacted())
         # Rebuild the chain + pipeline so the change takes effect for the next run.
-        self._runner.set_pipeline(self._build_pipeline(self._config))
+        pipeline = self._build_pipeline(self._config)
+        self._configured = pipeline is not None
+        self._runner.set_pipeline(pipeline)
         self._tray.notify("翻訳設定", "保存しました。次の翻訳から有効になります。")
 
     def _on_open_logs(self) -> None:

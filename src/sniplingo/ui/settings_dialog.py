@@ -26,7 +26,7 @@ from sniplingo.core.settings_update import SettingsForm
 from sniplingo.domain.models import BackendName
 
 _BACKEND_LABELS: list[tuple[str, str]] = [
-    (BackendName.GOOGLE_FREE.value, "Google 無料 (既定・キー不要)"),
+    (BackendName.GOOGLE_CLOUD.value, "Google Cloud Translation (既定・キー必要)"),
     (BackendName.DEEPL.value, "DeepL (キー必要)"),
     (BackendName.GEMINI.value, "Gemini (キー必要)"),
 ]
@@ -37,8 +37,10 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("翻訳設定")
         self.setModal(True)
+        self._google_cloud_clear = False
         self._deepl_clear = False
         self._gemini_clear = False
+        self._google_cloud_has_existing = config.has_google_cloud
         self._deepl_has_existing = config.has_deepl
         self._gemini_has_existing = config.has_gemini
 
@@ -54,11 +56,23 @@ class SettingsDialog(QDialog):
         form.addRow("既定バックエンド", self._backend)
 
         note = QLabel(
-            "失敗時は Google 無料 / DeepL (キー設定時) へ自動で切り替えます。"
+            "失敗時は Google Cloud / DeepL (キー設定時) へ自動で切り替えます。"
             "Gemini は既定に選んだときだけ使います。"
         )
         note.setWordWrap(True)
         form.addRow("", note)
+
+        # --- Google Cloud Translation ------------------------------------------------
+        self._google_cloud_key = QLineEdit()
+        self._google_cloud_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._google_cloud_key.setPlaceholderText("(未入力なら現在の値を保持)")
+        self._google_cloud_status, google_cloud_row = self._key_row(
+            line_edit=self._google_cloud_key,
+            has_existing=config.has_google_cloud,
+            on_clear=self._on_google_cloud_clear,
+        )
+        form.addRow("Google Cloud APIキー", google_cloud_row)
+        form.addRow("", self._google_cloud_status)
 
         # --- DeepL -------------------------------------------------------------------
         self._deepl_key = QLineEdit()
@@ -123,6 +137,10 @@ class SettingsDialog(QDialog):
             return "クリア予定 (保存時に削除)"
         return "(設定済み)" if has_existing else "(未設定)"
 
+    def _on_google_cloud_clear(self, status: QLabel) -> None:
+        self._google_cloud_clear = True
+        status.setText(self._status_text(self._google_cloud_has_existing, cleared=True))
+
     def _on_deepl_clear(self, status: QLabel) -> None:
         self._deepl_clear = True
         status.setText(self._status_text(self._deepl_has_existing, cleared=True))
@@ -140,6 +158,8 @@ class SettingsDialog(QDialog):
         """Snapshot the current widget state into a SettingsForm."""
         return SettingsForm(
             default_backend=self._backend.currentData(),
+            google_cloud_key_input=self._google_cloud_key.text(),
+            google_cloud_clear=self._google_cloud_clear,
             deepl_key_input=self._deepl_key.text(),
             deepl_clear=self._deepl_clear,
             gemini_key_input=self._gemini_key.text(),

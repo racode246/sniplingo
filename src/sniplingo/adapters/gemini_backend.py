@@ -101,6 +101,7 @@ class GeminiTranslator:
             f"{_API_ROOT}/{self._model}:generateContent",
             label="Gemini",
             timeout=_TIMEOUT_SECONDS,
+            secrets=[self._api_key],
             headers={"x-goog-api-key": self._api_key, "Content-Type": "application/json"},
             json=payload,
         )

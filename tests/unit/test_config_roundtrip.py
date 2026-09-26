@@ -12,7 +12,9 @@ def test_defaults():
     assert c.source_lang == "en"
     assert c.target_lang == "ja"
     assert c.select_region_hotkey == "<ctrl>+<alt>+r"
-    assert c.default_backend is BackendName.GOOGLE_FREE
+    assert c.default_backend is BackendName.GOOGLE_CLOUD
+    assert c.google_cloud_api_key is None
+    assert c.has_google_cloud is False
     assert c.overlay_position is None
     assert c.deepl_api_key is None
     assert c.gemini_api_key is None
@@ -182,9 +184,10 @@ def test_redacted_masks_every_secret_and_keeps_the_rest():
 # --- validation: values of the right type but out of range fall back to defaults ---
 
 
-def test_removed_argos_backend_falls_back_to_google_free():
-    assert AppConfig.from_dict({"default_backend": "argos"}).default_backend is (
-        BackendName.GOOGLE_FREE
+@pytest.mark.parametrize("removed", ["argos", "google_free"])
+def test_removed_backends_fall_back_to_google_cloud(removed):
+    assert AppConfig.from_dict({"default_backend": removed}).default_backend is (
+        BackendName.GOOGLE_CLOUD
     )
 
 
@@ -228,4 +231,13 @@ def test_empty_region_is_dropped():
 
 def test_secrets_lists_only_configured_keys():
     assert AppConfig().secrets() == []
-    assert AppConfig(deepl_api_key="d", gemini_api_key="g").secrets() == ["d", "g"]
+    config = AppConfig(deepl_api_key="d", gemini_api_key="g", google_cloud_api_key="c")
+    assert sorted(config.secrets()) == ["c", "d", "g"]
+
+
+def test_google_cloud_key_roundtrips_and_is_redacted():
+    c = AppConfig(google_cloud_api_key="cloud-secret")
+    assert c.has_google_cloud is True
+    assert AppConfig.from_dict(c.to_dict()) == c
+    assert c.redacted()["google_cloud_api_key"] == "****"
+    assert "cloud-secret" not in json.dumps(c.redacted())

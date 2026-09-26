@@ -29,6 +29,6 @@ description: sniplingo に新しい翻訳バックエンド（例 DeepL・別エ
 5. `tdd-cycle` の最終確認（pytest 全緑・ruff・境界ガード）を実施。
 
 ## 既存バックエンド
-- `GoogleFreeTranslator`（`client=gtx` JSON API・既定・キー不要）
+- `GoogleCloudTranslator`（Cloud Translation API v2・既定・`X-Goog-Api-Key` ヘッダ）
 - `DeepLTranslator`（DeepL API v2 直呼び・任意・`:fx` キーは Free エンドポイント）
 - `GeminiTranslator`（任意・テキスト翻訳と Vision〈画像直接〉の両方を実装）
