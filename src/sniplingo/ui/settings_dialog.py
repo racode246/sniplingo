@@ -9,7 +9,6 @@ shows that a key is saved, and a "クリア" button explicitly removes it.
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -28,7 +27,6 @@ from sniplingo.domain.models import BackendName
 
 _BACKEND_LABELS: list[tuple[str, str]] = [
     (BackendName.GOOGLE_FREE.value, "Google 無料 (既定・キー不要)"),
-    (BackendName.ARGOS.value, "Argos オフライン"),
     (BackendName.DEEPL.value, "DeepL (キー必要)"),
     (BackendName.GEMINI.value, "Gemini (キー必要)"),
 ]
@@ -52,12 +50,15 @@ class SettingsDialog(QDialog):
         self._backend = QComboBox()
         for value, label in _BACKEND_LABELS:
             self._backend.addItem(label, userData=value)
-        self._select_backend(config.default_backend)
+        self._select_backend(config.default_backend.value)
         form.addRow("既定バックエンド", self._backend)
 
-        self._offline_fallback = QCheckBox("失敗時は Argos オフラインへフォールバック")
-        self._offline_fallback.setChecked(config.enable_offline_fallback)
-        form.addRow("", self._offline_fallback)
+        note = QLabel(
+            "失敗時は Google 無料 / DeepL (キー設定時) へ自動で切り替えます。"
+            "Gemini は既定に選んだときだけ使います。"
+        )
+        note.setWordWrap(True)
+        form.addRow("", note)
 
         # --- DeepL -------------------------------------------------------------------
         self._deepl_key = QLineEdit()
@@ -139,7 +140,6 @@ class SettingsDialog(QDialog):
         """Snapshot the current widget state into a SettingsForm."""
         return SettingsForm(
             default_backend=self._backend.currentData(),
-            enable_offline_fallback=self._offline_fallback.isChecked(),
             deepl_key_input=self._deepl_key.text(),
             deepl_clear=self._deepl_clear,
             gemini_key_input=self._gemini_key.text(),

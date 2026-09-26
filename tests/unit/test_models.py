@@ -2,11 +2,14 @@ import dataclasses
 
 import pytest
 
+from sniplingo.domain.errors import PermanentTranslationError, TranslationError
 from sniplingo.domain.models import (
+    BackendAttempt,
     BackendName,
     OcrLine,
     OcrResult,
     Region,
+    ResultStatus,
     TranslationResult,
 )
 
@@ -50,8 +53,12 @@ def test_ocr_result_empty():
 
 def test_backend_name_values():
     assert BackendName.GOOGLE_FREE.value == "google_free"
-    assert BackendName.ARGOS.value == "argos"
     assert BackendName.DEEPL.value == "deepl"
+    assert BackendName.GEMINI.value == "gemini"
+
+
+def test_argos_backend_was_removed():
+    assert "argos" not in {b.value for b in BackendName}
 
 
 def test_translation_result_ok_by_default():
@@ -66,13 +73,49 @@ def test_translation_result_ok_by_default():
     assert tr.ok is True
 
 
-def test_translation_result_failure_is_not_ok():
-    tr = TranslationResult(
-        source_text="hi",
-        translated_text="",
-        source_lang="en",
-        target_lang="ja",
-        backend="",
-        error="all backends failed",
-    )
+def test_translation_result_status_defaults_to_ok():
+    tr = TranslationResult("hi", "やあ", "en", "ja", backend="google_free")
+    assert tr.status is ResultStatus.OK
+    assert tr.attempts == ()
+
+
+def test_failed_factory_builds_a_failed_result():
+    attempts = (BackendAttempt("google_free", "HTTP 429"), BackendAttempt("gemini", "HTTP 503"))
+    tr = TranslationResult.failed("hi", "en", "ja", error="all failed", attempts=attempts)
+    assert tr.status is ResultStatus.FAILED
     assert tr.ok is False
+    assert tr.error == "all failed"
+    assert tr.backend is None
+    assert tr.translated_text == ""
+    assert tr.source_text == "hi"
+    assert tr.attempts == attempts
+
+
+def test_no_text_factory_is_distinct_from_failure():
+    tr = TranslationResult.no_text("en", "ja")
+    assert tr.status is ResultStatus.NO_TEXT
+    assert tr.ok is False
+    assert tr.error is None
+    assert tr.backend is None
+    assert tr.source_text == "" and tr.translated_text == ""
+
+
+def test_failed_status_requires_an_error_message():
+    with pytest.raises(ValueError):
+        TranslationResult("hi", "", "en", "ja", backend=None, status=ResultStatus.FAILED)
+
+
+def test_translation_result_is_deeply_immutable():
+    tr = TranslationResult("hi", "やあ", "en", "ja", backend="x")
+    assert not hasattr(tr, "meta")  # the mutable dict escape hatch is gone
+    assert isinstance(tr.attempts, tuple)
+
+
+def test_backend_attempt_ok_when_no_error():
+    assert BackendAttempt("google_free").ok is True
+    assert BackendAttempt("google_free", "boom").ok is False
+
+
+def test_permanent_translation_error_is_a_translation_error():
+    # Callers that only know TranslationError still catch it; the chain can special-case it.
+    assert issubclass(PermanentTranslationError, TranslationError)

@@ -1,7 +1,9 @@
 """Composition root: build adapters, wire signals, run the Qt event loop.
 
 This is the ONLY place dependencies are constructed and connected (see
-`.claude/rules/architecture.md`). Everything else receives its collaborators.
+`.claude/rules/architecture.md`). Everything else receives its collaborators. Which
+backends run, and in what order, is decided by :func:`core.backend_plan.plan_backends`;
+this module only turns that plan into concrete adapters.
 
 Flow: pick a region (hotkey or tray) -> it is translated automatically -> the result
 is shown in a draggable overlay. There is no separate translate hotkey.
@@ -9,30 +11,42 @@ is shown in a draggable overlay. There is no separate translate hotkey.
 
 from __future__ import annotations
 
+import logging
 import sys
+from dataclasses import replace
+from pathlib import Path
 
-from PySide6.QtCore import QLockFile, QObject, QRect, Qt
+from PySide6.QtCore import QLockFile, QObject, QRect, Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QApplication, QDialog, QMessageBox
 
-from sniplingo.adapters.argos_backend import ArgosTranslator
-from sniplingo.adapters.deep_translator_backend import GoogleFreeTranslator
+from sniplingo import __version__
 from sniplingo.adapters.deepl_backend import DeepLTranslator
 from sniplingo.adapters.gemini_backend import GeminiTranslator
+from sniplingo.adapters.google_free_backend import GoogleFreeTranslator
 from sniplingo.adapters.mss_capturer import MssCapturer
 from sniplingo.adapters.winrt_ocr import WinRtOcrEngine
+from sniplingo.core.backend_plan import plan_backends
 from sniplingo.core.config import AppConfig, default_config_path, load_config, save_config
 from sniplingo.core.pipeline import TranslationPipeline
 from sniplingo.core.settings_update import apply_settings
 from sniplingo.core.translator_chain import TranslatorChain
-from sniplingo.domain.models import BackendName, Region
-from sniplingo.ports.image_translate import ImageTranslator
+from sniplingo.domain.models import BackendName, Region, ResultStatus, TranslationResult
+from sniplingo.ports.translate import Translator
 from sniplingo.ui.hotkey import GlobalHotkey
 from sniplingo.ui.hotkey_dialog import HotkeyCaptureDialog
+from sniplingo.ui.logging_setup import (
+    RedactingFormatter,
+    configure_logging,
+    install_exception_hooks,
+)
 from sniplingo.ui.overlay_window import OverlayWindow
 from sniplingo.ui.region_selector import RegionSelector
 from sniplingo.ui.settings_dialog import SettingsDialog
 from sniplingo.ui.tray import Tray
 from sniplingo.ui.worker import PipelineRunner
+
+logger = logging.getLogger(__name__)
 
 _OCR_INSTALL_CMD = 'Add-WindowsCapability -Online -Name "Language.OCR~~~en-US~0.0.1.0"'
 
@@ -46,57 +60,26 @@ def _pretty_hotkey(combo: str) -> str:
     return "+".join(parts)
 
 
-def build_translator_chain(config: AppConfig):
-    """Primary backend per config, with Argos offline fallback when enabled.
-
-    Keyed backends (DeepL, Gemini) require their key in config; without the key
-    the request silently falls through to the default Google free endpoint.
-
-    When Gemini is the chosen primary AND Vision is wired up (see
-    :func:`_build_image_translator`), this text chain is the **fallback** path,
-    so we deliberately skip Gemini here — it would just hit the same rate limit
-    that the Vision call hit. Google free becomes the text primary instead.
-    """
-
-    def make(name: str):
-        if name == BackendName.DEEPL.value and config.has_deepl:
+def _make_translator(name: BackendName, config: AppConfig) -> Translator:
+    """Construct one text backend. The plan only names keyed backends whose key is set."""
+    match name:
+        case BackendName.DEEPL:
             return DeepLTranslator(config.deepl_api_key or "")
-        if name == BackendName.GEMINI.value and config.has_gemini:
+        case BackendName.GEMINI:
             return GeminiTranslator(config.gemini_api_key or "", model=config.gemini_model)
-        if name == BackendName.ARGOS.value:
-            return ArgosTranslator()
-        return GoogleFreeTranslator()
-
-    text_primary_name = config.default_backend
-    if text_primary_name == BackendName.GEMINI.value and config.has_gemini:
-        # Gemini handles the primary attempt via Vision; don't re-try it as text.
-        text_primary_name = BackendName.GOOGLE_FREE.value
-
-    primary = make(text_primary_name)
-    fallbacks = []
-    if config.enable_offline_fallback and text_primary_name != BackendName.ARGOS.value:
-        fallbacks.append(ArgosTranslator())
-    return TranslatorChain(primary, fallbacks, retries=1, backoff_seconds=0.5)
-
-
-def _build_image_translator(config: AppConfig) -> ImageTranslator | None:
-    """Enable the Vision (image-direct) path only when Gemini is the chosen primary.
-
-    LLMs can do OCR + translation in one round-trip, which is faster and more
-    accurate than Windows OCR + text translate. The text-based :class:`TranslatorChain`
-    above still runs as a fallback if the Vision call fails.
-    """
-    if config.default_backend == BackendName.GEMINI.value and config.has_gemini:
-        return GeminiTranslator(config.gemini_api_key or "", model=config.gemini_model)
-    return None
+        case BackendName.GOOGLE_FREE:
+            return GoogleFreeTranslator()
+    raise ValueError(f"unknown backend: {name}")  # pragma: no cover
 
 
 class Application(QObject):
-    def __init__(self, config: AppConfig, config_path) -> None:
+    def __init__(
+        self, config: AppConfig, config_path: Path, log_formatter: RedactingFormatter
+    ) -> None:
         super().__init__()
         self._config = config
         self._config_path = config_path
-        self._region: Region | None = config.region
+        self._log_formatter = log_formatter
 
         self._ocr = WinRtOcrEngine(scale=config.ocr_scale)
         self._capturer = MssCapturer()
@@ -115,6 +98,7 @@ class Application(QObject):
         self._tray.translate_now_requested.connect(self._on_translate_now)
         self._tray.set_hotkey_requested.connect(self._on_set_hotkey)
         self._tray.settings_requested.connect(self._on_open_settings)
+        self._tray.open_logs_requested.connect(self._on_open_logs)
         self._tray.quit_requested.connect(self._quit)
         self._selector.selected.connect(self._on_region_selected)
         self._overlay.moved.connect(self._on_overlay_moved)
@@ -122,13 +106,25 @@ class Application(QObject):
         self._runner.failed.connect(self._on_failed)
 
     def _build_pipeline(self, config: AppConfig) -> TranslationPipeline:
+        plan = plan_backends(config)
+        logger.info("backend plan: vision=%s text=%s", plan.vision, list(plan.text))
+        chain = TranslatorChain(
+            [_make_translator(name, config) for name in plan.text],
+            retries=1,
+            backoff_seconds=0.5,
+        )
+        vision = (
+            GeminiTranslator(config.gemini_api_key or "", model=config.gemini_model)
+            if plan.vision is BackendName.GEMINI
+            else None
+        )
         return TranslationPipeline(
             self._capturer,
             self._ocr,
-            build_translator_chain(config),
+            chain,
             source=config.source_lang,
             target=config.target_lang,
-            image_translator=_build_image_translator(config),
+            image_translator=vision,
             capture_padding=config.capture_padding,
         )
 
@@ -137,8 +133,10 @@ class Application(QObject):
         try:
             self._hotkey.start()
         except Exception:  # noqa: BLE001 - hotkey is optional; tray still works
+            logger.exception("global hotkey registration failed")
             self._tray.notify("ホットキー登録失敗", "トレイメニューから操作してください。")
         if not self._ocr.is_language_available(self._config.source_lang):
+            logger.warning("OCR language pack missing for %r", self._config.source_lang)
             self._tray.notify(
                 "OCR言語パック未導入",
                 f"管理者PowerShellで次を実行してください: {_OCR_INSTALL_CMD}",
@@ -147,41 +145,35 @@ class Application(QObject):
     # --- slots -------------------------------------------------------------------
 
     def _on_region_selected(self, region: Region) -> None:
-        self._region = region
-        self._config.region = region
-        self._save_config()
+        self._update_config(region=region)
         self._runner.submit(region)  # selecting a region translates it automatically
 
     def _on_translate_now(self) -> None:
-        if self._region is None:
+        if self._config.region is None:
             self._tray.notify("範囲が未選択", "先に「範囲を選択して翻訳」してください。")
             self._selector.start()
             return
-        self._runner.submit(self._region)
+        self._runner.submit(self._config.region)
 
-    def _on_result(self, result) -> None:
-        if result.error == "no_text":
+    def _on_result(self, region: Region, result: TranslationResult) -> None:
+        if result.status is ResultStatus.NO_TEXT:
             self._tray.set_status("テキストなし")
             return
-        if not result.ok:
+        if result.status is ResultStatus.FAILED:
             self._tray.set_status("失敗")
             # Adapter-level errors carry no secrets (see `.claude/rules/secrets.md`),
             # so it's safe to surface them — they're the fastest path to a diagnosis.
-            detail = result.error or "ネットワーク/バックエンドを確認してください。"
-            self._tray.notify("翻訳に失敗", detail)
+            self._tray.notify("翻訳に失敗", result.error or "詳細はログを確認してください。")
             return
-        self._tray.set_status(result.backend)
-        if self._region is not None:
-            anchor = QRect(
-                self._region.left, self._region.top, self._region.width, self._region.height
-            )
-            self._overlay.show_translation(
-                result.translated_text, anchor, self._config.overlay_position
-            )
+        self._tray.set_status(result.backend or "-")
+        # Anchor to the region this result was computed for, not the latest selection.
+        anchor = QRect(region.left, region.top, region.width, region.height)
+        self._overlay.show_translation(
+            result.translated_text, anchor, self._config.overlay_position
+        )
 
     def _on_overlay_moved(self, x: int, y: int) -> None:
-        self._config.overlay_position = (x, y)
-        self._save_config()
+        self._update_config(overlay_position=(x, y))
 
     def _on_failed(self, message: str) -> None:
         self._tray.set_status("エラー")
@@ -191,12 +183,16 @@ class Application(QObject):
         dialog = SettingsDialog(self._config)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        new_config = apply_settings(self._config, dialog.form_values())
-        self._config = new_config
+        self._config = apply_settings(self._config, dialog.form_values())
         self._save_config()
+        self._log_formatter.set_secrets(self._config.secrets())
+        logger.info("settings changed: %s", self._config.redacted())
         # Rebuild the chain + pipeline so the change takes effect for the next run.
-        self._runner.set_pipeline(self._build_pipeline(new_config))
+        self._runner.set_pipeline(self._build_pipeline(self._config))
         self._tray.notify("翻訳設定", "保存しました。次の翻訳から有効になります。")
+
+    def _on_open_logs(self) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_dir_for(self._config_path))))
 
     def _on_set_hotkey(self) -> None:
         self._hotkey.stop()  # don't trigger selection while capturing keys
@@ -209,26 +205,36 @@ class Application(QObject):
             except ValueError:
                 self._tray.notify("ショートカット設定", "無効な組み合わせです。")
             else:
-                self._config.select_region_hotkey = combo
-                self._save_config()
+                self._update_config(select_region_hotkey=combo)
                 self._tray.notify(
                     "ショートカット設定", f"範囲選択を {_pretty_hotkey(combo)} に変更しました。"
                 )
         try:
             self._hotkey.start()
         except Exception:  # noqa: BLE001 - hotkey is optional; tray still works
+            logger.exception("global hotkey re-registration failed")
             self._tray.notify("ホットキー登録失敗", "トレイメニューから操作してください。")
+
+    def _update_config(self, **changes) -> None:
+        self._config = replace(self._config, **changes)
+        self._save_config()
 
     def _save_config(self) -> None:
         try:
             save_config(self._config, self._config_path)
         except OSError:
-            pass  # not fatal; settings stay active for this session
+            # Not fatal; settings stay active for this session.
+            logger.warning("could not save config to %s", self._config_path, exc_info=True)
 
     def _quit(self) -> None:
+        logger.info("quitting")
         self._hotkey.stop()
         self._runner.shutdown()
         QApplication.quit()
+
+
+def log_dir_for(config_path: Path) -> Path:
+    return config_path.parent / "logs"
 
 
 def run() -> int:
@@ -252,7 +258,10 @@ def run() -> int:
         return 0
 
     config = load_config(config_path)
+    log_formatter = configure_logging(log_dir_for(config_path), secrets=config.secrets())
+    install_exception_hooks()
+    logger.info("SnipLingo %s starting; config=%s", __version__, config.redacted())
 
-    application = Application(config, config_path)
+    application = Application(config, config_path, log_formatter)
     application.start()
     return app.exec()

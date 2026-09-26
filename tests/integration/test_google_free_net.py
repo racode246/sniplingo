@@ -3,7 +3,7 @@ Run with: pytest tests/integration -m network"""
 
 import pytest
 
-from sniplingo.adapters.deep_translator_backend import GoogleFreeTranslator
+from sniplingo.adapters.google_free_backend import GoogleFreeTranslator
 
 pytestmark = pytest.mark.network
 

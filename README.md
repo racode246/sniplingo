@@ -9,8 +9,9 @@ in-game text (borderless / windowed games — exclusive fullscreen is not suppor
 
 ## Features
 - **Completely free** (no API key, no credit card).
-  - Default: Google's free endpoint (`deep-translator`).
-  - On failure (rate limit / network error): a short backoff, then automatic fallback to **Argos offline**.
+  - Default: Google's free endpoint (`translate.googleapis.com` `client=gtx`, no key).
+  - On failure: a short backoff and one retry, then automatic fallback to Google free / DeepL (if its key is set).
+    Permanent errors (bad key, quota exceeded) skip the retry. Gemini is never used as a fallback.
   - DeepL / **Gemini** are optional (enabled only when you set a key; Gemini keys are free from [Google AI Studio](https://aistudio.google.com/apikey)).
 - OCR uses the built-in Windows engine (free, no key). English → Japanese (the language pair is config-driven).
 - Translation happens on demand when you pick a region — there is no continuous polling, so it stays light.
@@ -23,7 +24,7 @@ in-game text (borderless / windowed games — exclusive fullscreen is not suppor
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"            # to also use offline translation: pip install -e ".[dev,offline]"
+pip install -e ".[dev]"
 ```
 
 ## Run & usage
@@ -42,28 +43,31 @@ pip install -e ".[dev]"            # to also use offline translation: pip instal
 5. **Change the shortcut**: the tray item **"範囲選択のショートカットを設定…" (Set region-select shortcut…)**
    lets you register a new combo just by pressing the keys (saved to `config.json`).
 6. The tray status line "バックエンド: …" (Backend: …) shows which translation engine was used last.
+7. **Logs**: the tray item **"ログフォルダを開く" (Open log folder)** opens `%APPDATA%\SnipLingo\logs`
+   (`sniplingo.log`, rotated 1 MB × 3). Every backend attempt and failure is recorded there; API keys are masked.
+   Set the environment variable `SNIPLINGO_LOG_LEVEL=DEBUG` for more detail.
 
 ## Configuration
-Settings are stored in **`%APPDATA%\SnipLingo\config.json`** (never in the repo). Main keys:
+Settings are stored in **`%APPDATA%\SnipLingo\config.json`** (never in the repo). Values of the wrong type or
+outside the valid range fall back to the default. Main keys:
 
 | Key | Default | Description |
 |---|---|---|
 | `source_lang` / `target_lang` | `en` / `ja` | Translation direction |
 | `select_region_hotkey` | `<ctrl>+<alt>+r` | Region-select (→ auto-translate) hotkey (pynput format) |
-| `default_backend` | `google_free` | `google_free` / `argos` / `deepl` / `gemini` |
-| `enable_offline_fallback` | `true` | Fall back to Argos on failure |
+| `default_backend` | `google_free` | `google_free` / `deepl` / `gemini` (a keyed backend without its key falls back to `google_free`) |
 | `deepl_api_key` | `null` | Enables DeepL only when set (never written to logs) |
 | `gemini_api_key` | `null` | Enables Gemini only when set (never written to logs) |
 | `gemini_model` | `gemini-2.5-flash` | Gemini model name (e.g. `gemini-2.5-flash-lite`, `gemini-2.5-pro`) |
-| `overlay_opacity` | `0.85` | Overlay opacity (font is fixed at 16px) |
+| `overlay_opacity` | `0.85` | Overlay opacity, 0.1–1.0 (font is fixed at 16px) |
 | `overlay_position` | `null` | Position `[x, y]` where you dragged the overlay (anchors below the region if unset) |
+| `capture_padding` | `8` | Extra pixels captured around the selection, 0–64 (keeps OCR from clipping edge glyphs) |
+| `ocr_scale` | `2` | Upscale factor before OCR, 1–4 |
 
-## Installing the offline (Argos) model
-The offline fallback needs a one-time model download (no network needed afterward).
-```powershell
-pip install -e ".[offline]"
-.\.venv\Scripts\python.exe -c "from sniplingo.adapters.argos_backend import install_package; install_package('en','ja')"
-```
+**Fallback order**: `default_backend` first, then Google free → DeepL (only with a key).
+Gemini is never a fallback — it is used only when chosen as `default_backend`.
+With `gemini` as the default, the captured image goes straight to Gemini (Vision); if that fails, the
+OCR + text chain runs without Gemini.
 
 ## Building the executable (.exe)
 You can build a double-clickable exe instead of running a command (PyInstaller, one-folder).
@@ -71,8 +75,7 @@ You can build a double-clickable exe instead of running a command (PyInstaller, 
 .\.venv\Scripts\python.exe -m PyInstaller sniplingo.spec --noconfirm --clean
 ```
 - Output: **`dist\SnipLingo\SnipLingo.exe`** (distribute the whole `dist\SnipLingo\` folder; tray-resident, no console).
-- Bundled: Windows OCR (winrt) / mss / deep_translator / pynput / PySide6. **Offline translation (argos) is intentionally excluded** to keep the size down.
-  - To bundle offline translation too, run `pip install -e ".[offline]"`, then rebuild after removing `argostranslate` (and friends) from `excludes` in `sniplingo.spec`.
+- Bundled: Windows OCR (winrt) / mss / requests / pynput / PySide6.
 - The icon is `assets\sniplingo.ico`.
 - Note: stop any running `SnipLingo.exe` before rebuilding (`Get-Process SnipLingo | Stop-Process`), otherwise the bundled DLLs are locked.
 
@@ -88,13 +91,21 @@ You can build a double-clickable exe instead of running a command (PyInstaller, 
 $env:QT_QPA_PLATFORM="offscreen"; .\.venv\Scripts\python.exe -m pytest tests/integration -m qt
 ```
 
+### OCR ground-truth corpus
+Put an image and a same-named `.txt` holding the expected text side by side under `tests/data/ocr/`
+(screenshots you can't redistribute go in the git-ignored `tests/data/ocr/local/`); every pair is then tested
+through the real OCR path, with a similarity score per case. See [`tests/data/ocr/README.md`](tests/data/ocr/README.md).
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/integration/test_ocr_corpus_real.py -m windows_ocr
+```
+
 ## Troubleshooting
 - **English OCR pack missing**: a tray notification appears on launch. In an admin PowerShell run:
   ```powershell
   Add-WindowsCapability -Online -Name "Language.OCR~~~en-US~0.0.1.0"
   ```
-- **Nothing is translated / "失敗" (failure) shown**: usually rate limiting from rapid use or a flaky connection.
-  Wait a moment, or install Argos offline (above).
+- **Nothing is translated / "失敗" (failure) shown**: the notification lists every backend that was tried and why
+  it failed (details in the log — tray → "ログフォルダを開く"). Setting a DeepL key gives the chain a fallback.
 - **Overlay hidden behind the game**: switch the game to **borderless / windowed** mode (exclusive fullscreen is unsupported).
 - **Hotkey doesn't work**: use the tray item "範囲を選択して翻訳" instead. If another resident app grabs the keys,
   change the combo via the tray's "範囲選択のショートカットを設定…" (or `select_region_hotkey` in `config.json`).

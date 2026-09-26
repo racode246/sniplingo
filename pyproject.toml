@@ -15,7 +15,7 @@ dependencies = [
     "mss>=9.0",
     "Pillow>=10.0",
     "pynput>=1.7",
-    "deep-translator>=1.11",
+    "requests>=2.31",  # translation backends (Google free / DeepL / Gemini) over HTTP
     "winrt-Windows.Media.Ocr>=3.2.1",
     "winrt-Windows.Graphics.Imaging>=3.2.1",
     "winrt-Windows.Storage.Streams>=3.2.1",
@@ -26,8 +26,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Heavy offline NMT fallback. Installed on demand: pip install -e ".[offline]"
-offline = ["argostranslate>=1.9"]
 dev = [
     "pytest>=8.0",
     "pytest-mock>=3.12",
@@ -46,12 +44,13 @@ packages = ["src/sniplingo"]
 [tool.pytest.ini_options]
 # Default `pytest` run = fast unit tests only. Integration tests are opt-in:
 #   pytest tests/integration -m "windows_ocr or network or display or qt"
+# OCR ground-truth corpus (tests/data/ocr): pytest tests/integration -m windows_ocr
 testpaths = ["tests/unit"]
 pythonpath = ["."]
 addopts = "-ra"
 markers = [
     "windows_ocr: requires the Windows OCR engine and an installed English language pack",
-    "network: requires network access (deep-translator / Google free endpoint)",
+    "network: requires network access (Google free endpoint)",
     "display: requires a display / desktop session (mss capture)",
     "qt: requires a Qt environment (pytest-qt)",
 ]

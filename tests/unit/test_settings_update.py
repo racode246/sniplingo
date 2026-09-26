@@ -2,13 +2,13 @@
 
 from sniplingo.core.config import AppConfig
 from sniplingo.core.settings_update import SettingsForm, apply_settings
+from sniplingo.domain.models import BackendName
 
 
 def _form(**kw) -> SettingsForm:
     """Build a form with all fields explicit; tests override what they care about."""
     defaults = dict(
         default_backend="google_free",
-        enable_offline_fallback=True,
         deepl_key_input="",
         deepl_clear=False,
         gemini_key_input="",
@@ -47,11 +47,15 @@ def test_clear_wins_over_typed_input():
     assert out.deepl_api_key is None
 
 
-def test_default_backend_and_offline_fallback_are_replaced():
-    base = AppConfig(default_backend="google_free", enable_offline_fallback=True)
-    out = apply_settings(base, _form(default_backend="gemini", enable_offline_fallback=False))
-    assert out.default_backend == "gemini"
-    assert out.enable_offline_fallback is False
+def test_default_backend_is_replaced_as_enum():
+    out = apply_settings(AppConfig(), _form(default_backend="gemini"))
+    assert out.default_backend is BackendName.GEMINI
+
+
+def test_unknown_backend_value_keeps_current_backend():
+    base = AppConfig(default_backend=BackendName.DEEPL)
+    out = apply_settings(base, _form(default_backend="argos"))
+    assert out.default_backend is BackendName.DEEPL
 
 
 def test_gemini_model_overrides_when_nonblank():
@@ -94,14 +98,9 @@ def test_returns_new_instance_without_mutating_input():
 
 def test_from_existing_helper_seeds_form_with_current_values():
     """The dialog calls this to pre-fill non-secret fields (model, backend, ...)."""
-    base = AppConfig(
-        default_backend="gemini",
-        enable_offline_fallback=False,
-        gemini_model="gemini-2.5-flash-lite",
-    )
+    base = AppConfig(default_backend=BackendName.GEMINI, gemini_model="gemini-2.5-flash-lite")
     form = SettingsForm.from_config(base)
     assert form.default_backend == "gemini"
-    assert form.enable_offline_fallback is False
     assert form.gemini_model == "gemini-2.5-flash-lite"
     # Secrets are never pre-filled, even when set.
     assert form.deepl_key_input == ""

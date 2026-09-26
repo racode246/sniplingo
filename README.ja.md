@@ -8,8 +8,9 @@ Windows 11 デスクトップアプリ。画面上で**範囲をドラッグ選�
 
 ## 特徴
 - **完全無料**（APIキー・クレジットカード不要）。
-  - 既定: Google 無料エンドポイント（`deep-translator`）
-  - 失敗時（レート制限/通信エラー）: 短いバックオフ後に **Argos オフライン**へ自動フォールバック
+  - 既定: Google 無料エンドポイント（`translate.googleapis.com` の `client=gtx`・キー不要）
+  - 失敗時: 短いバックオフで 1 回リトライした後、Google 無料 / DeepL（キー設定時）へ自動フォールバック。
+    キー不正・クォータ超過などの恒久的エラーはリトライせず即座に次へ。Gemini はフォールバックに使いません
   - DeepL / **Gemini** は任意（キーを設定したときだけ有効。Gemini は [Google AI Studio](https://aistudio.google.com/apikey) で無料発行可）
 - OCR は Windows 標準（無料・キー不要）。英語→日本語（言語は設定で変更可能な作り）。
 - ホットキーで「押した瞬間」だけ翻訳（常時監視しない＝軽い）。
@@ -22,7 +23,7 @@ Windows 11 デスクトップアプリ。画面上で**範囲をドラッグ選�
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"            # オフライン翻訳も使うなら: pip install -e ".[dev,offline]"
+pip install -e ".[dev]"
 ```
 
 ## 起動と操作
@@ -39,28 +40,28 @@ pip install -e ".[dev]"            # オフライン翻訳も使うなら: pip i
 5. **ショートカット変更**: トレイの **「範囲選択のショートカットを設定…」** で、設定したいキーを押すだけで登録できます
    （`config.json` に保存）。
 6. トレイの「バックエンド: …」表示で、いまどの翻訳エンジンが使われたか分かります。
+7. **ログ**: トレイの **「ログフォルダを開く」** で `%APPDATA%\SnipLingo\logs` を開けます（`sniplingo.log`、1MB×3 世代）。
+   各バックエンドの試行と失敗理由が記録されます（API キーはマスク）。詳細が必要なら環境変数 `SNIPLINGO_LOG_LEVEL=DEBUG`。
 
 ## 設定
-設定は **`%APPDATA%\SnipLingo\config.json`** に保存されます（リポジトリには置きません）。主な項目:
+設定は **`%APPDATA%\SnipLingo\config.json`** に保存されます（リポジトリには置きません）。型違い・範囲外の値は既定値に戻ります。主な項目:
 
 | キー | 既定 | 説明 |
 |---|---|---|
 | `source_lang` / `target_lang` | `en` / `ja` | 翻訳の言語方向 |
 | `select_region_hotkey` | `<ctrl>+<alt>+r` | 範囲選択（→自動翻訳）のホットキー（pynput 形式） |
-| `default_backend` | `google_free` | `google_free` / `argos` / `deepl` / `gemini` |
-| `enable_offline_fallback` | `true` | 失敗時に Argos へフォールバック |
+| `default_backend` | `google_free` | `google_free` / `deepl` / `gemini`（キー未設定なら `google_free` を使用） |
 | `deepl_api_key` | `null` | 設定時のみ DeepL が有効（ログに出力されません） |
 | `gemini_api_key` | `null` | 設定時のみ Gemini が有効（ログに出力されません） |
 | `gemini_model` | `gemini-2.5-flash` | 使用する Gemini モデル名（例: `gemini-2.5-flash-lite`, `gemini-2.5-pro`） |
-| `overlay_opacity` | `0.85` | オーバーレイの不透明度（フォントは 16px 固定） |
+| `overlay_opacity` | `0.85` | オーバーレイの不透明度 0.1〜1.0（フォントは 16px 固定） |
 | `overlay_position` | `null` | オーバーレイをドラッグした位置 `[x, y]`（未設定なら範囲の下に表示） |
+| `capture_padding` | `8` | 選択範囲の周囲に余分に取り込むピクセル数 0〜64（端の文字の欠け防止） |
+| `ocr_scale` | `2` | OCR 前の拡大倍率 1〜4 |
 
-## オフライン翻訳（Argos）モデルの導入
-オフライン・フォールバックを使うには一度だけモデルのダウンロードが必要です（以降はネット不要）。
-```powershell
-pip install -e ".[offline]"
-.\.venv\Scripts\python.exe -c "from sniplingo.adapters.argos_backend import install_package; install_package('en','ja')"
-```
+**フォールバック順**: `default_backend` → Google 無料 → DeepL（キー設定時のみ）。
+Gemini はフォールバックにせず、`default_backend` に選んだときだけ使います。
+`gemini` を既定にするとキャプチャ画像を Gemini に直接渡し（Vision）、失敗時は Gemini を除いた OCR＋テキスト翻訳で再試行します。
 
 ## 実行ファイル (exe) のビルド
 コマンドではなくダブルクリックで起動できる exe を作れます（PyInstaller・one-folder）。
@@ -68,8 +69,7 @@ pip install -e ".[offline]"
 .\.venv\Scripts\python.exe -m PyInstaller sniplingo.spec --noconfirm --clean
 ```
 - 出力: **`dist\SnipLingo\SnipLingo.exe`**（`dist\SnipLingo\` フォルダごと配布。トレイ常駐・コンソール無し）。
-- 同梱: Windows OCR(winrt) / mss / deep_translator / pynput / PySide6。**オフライン翻訳(argos)は意図的に除外**（容量削減）。
-  - exe にオフライン翻訳も含めたい場合は `pip install -e ".[offline]"` 後に再ビルドし、`sniplingo.spec` の `excludes` から `argostranslate` 等を外してください。
+- 同梱: Windows OCR(winrt) / mss / requests / pynput / PySide6。
 - アイコンは `assets\sniplingo.ico`。
 
 ## テスト / 静的検査
@@ -84,13 +84,21 @@ pip install -e ".[offline]"
 $env:QT_QPA_PLATFORM="offscreen"; .\.venv\Scripts\python.exe -m pytest tests/integration -m qt
 ```
 
+### OCR 正解コーパス
+`tests/data/ocr/` に画像と同名の `.txt`（正解テキスト）をペアで置くと、全ペアが実 OCR 経路で網羅的にテストされ、
+ケースごとの類似度が表示されます（再配布できないスクショは git 管理外の `tests/data/ocr/local/` へ）。
+詳細は [`tests/data/ocr/README.md`](tests/data/ocr/README.md)。
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/integration/test_ocr_corpus_real.py -m windows_ocr
+```
+
 ## トラブルシュート
 - **OCR言語パックが無い**: 起動時に通知が出ます。管理者 PowerShell で:
   ```powershell
   Add-WindowsCapability -Online -Name "Language.OCR~~~en-US~0.0.1.0"
   ```
-- **翻訳されない / 「失敗」表示**: 連打のレート制限や通信不調が原因のことがあります。少し待つか、
-  Argos オフライン（上記）を導入してください。
+- **翻訳されない / 「失敗」表示**: 通知に「試したバックエンドと各失敗理由」が出ます（詳細はトレイ →「ログフォルダを開く」）。
+  DeepL のキーを設定しておくと、Google が失敗したときの自動フォールバック先になります。
 - **オーバーレイがゲームに隠れる**: ゲームを**ボーダーレス/ウィンドウ**モードにしてください（排他的フルスクリーンは非対応）。
 - **ホットキーが効かない**: トレイの「範囲を選択して翻訳」で代替できます。常駐ソフトとのキー競合時はトレイの「範囲選択のショートカットを設定…」（または `config.json` の `select_region_hotkey`）を変更してください。
 

@@ -1,7 +1,10 @@
+import dataclasses
 import json
 
+import pytest
+
 from sniplingo.core.config import AppConfig, default_config_path, load_config, save_config
-from sniplingo.domain.models import Region
+from sniplingo.domain.models import BackendName, Region
 
 
 def test_defaults():
@@ -9,9 +12,8 @@ def test_defaults():
     assert c.source_lang == "en"
     assert c.target_lang == "ja"
     assert c.select_region_hotkey == "<ctrl>+<alt>+r"
-    assert c.default_backend == "google_free"
+    assert c.default_backend is BackendName.GOOGLE_FREE
     assert c.overlay_position is None
-    assert c.enable_offline_fallback is True
     assert c.deepl_api_key is None
     assert c.gemini_api_key is None
     assert c.gemini_model == "gemini-2.5-flash"
@@ -90,9 +92,9 @@ def test_from_dict_ignores_unknown_keys():
 
 
 def test_from_dict_wrong_types_fall_back_to_defaults():
-    c = AppConfig.from_dict({"target_lang": 123, "enable_offline_fallback": "yes"})
+    c = AppConfig.from_dict({"target_lang": 123, "overlay_opacity": "opaque"})
     assert c.target_lang == "ja"
-    assert c.enable_offline_fallback is True
+    assert c.overlay_opacity == 0.85
 
 
 def test_from_dict_bad_region_becomes_none():
@@ -149,3 +151,81 @@ def test_gemini_model_default_when_blank():
 def test_default_config_path_uses_appdata(monkeypatch, tmp_path):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     assert default_config_path() == tmp_path / "SnipLingo" / "config.json"
+
+
+# --- immutability / generic field handling -------------------------------------------
+
+
+def test_config_is_frozen():
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        AppConfig().region = Region(0, 0, 1, 1)  # type: ignore[misc]
+
+
+def test_to_dict_covers_every_field():
+    """Adding a dataclass field must be enough — no hand-maintained key list."""
+    assert set(AppConfig().to_dict()) == {f.name for f in dataclasses.fields(AppConfig)}
+
+
+def test_to_dict_is_json_serializable_with_enum_backend():
+    data = json.loads(json.dumps(AppConfig(default_backend=BackendName.GEMINI).to_dict()))
+    assert data["default_backend"] == "gemini"
+    assert AppConfig.from_dict(data).default_backend is BackendName.GEMINI
+
+
+def test_redacted_masks_every_secret_and_keeps_the_rest():
+    c = AppConfig(deepl_api_key="d-secret", gemini_api_key="g-secret", target_lang="fr")
+    red = c.redacted()
+    assert red["deepl_api_key"] == "****" and red["gemini_api_key"] == "****"
+    assert red["target_lang"] == "fr"
+
+
+# --- validation: values of the right type but out of range fall back to defaults ---
+
+
+def test_removed_argos_backend_falls_back_to_google_free():
+    assert AppConfig.from_dict({"default_backend": "argos"}).default_backend is (
+        BackendName.GOOGLE_FREE
+    )
+
+
+def test_legacy_offline_fallback_key_is_ignored():
+    c = AppConfig.from_dict({"enable_offline_fallback": True})
+    assert not hasattr(c, "enable_offline_fallback")
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("overlay_opacity", 5.0),
+        ("overlay_opacity", 0.0),
+        ("capture_padding", -3),
+        ("capture_padding", 1000),
+        ("ocr_scale", 0),
+        ("ocr_scale", 9),
+        ("source_lang", "  "),
+        ("target_lang", ""),
+        ("select_region_hotkey", "nope"),
+    ],
+)
+def test_out_of_range_values_fall_back_to_default(key, value):
+    assert getattr(AppConfig.from_dict({key: value}), key) == getattr(AppConfig(), key)
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [("overlay_opacity", 0.3), ("capture_padding", 0), ("ocr_scale", 4), ("ocr_scale", 1)],
+)
+def test_in_range_values_are_kept(key, value):
+    assert getattr(AppConfig.from_dict({key: value}), key) == value
+
+
+def test_empty_region_is_dropped():
+    assert (
+        AppConfig.from_dict({"region": {"left": 0, "top": 0, "width": 0, "height": 5}}).region
+        is None
+    )
+
+
+def test_secrets_lists_only_configured_keys():
+    assert AppConfig().secrets() == []
+    assert AppConfig(deepl_api_key="d", gemini_api_key="g").secrets() == ["d", "g"]
