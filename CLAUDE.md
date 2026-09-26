@@ -7,7 +7,9 @@ Windows 11 デスクトップアプリ。画面上で**範囲をドラッグ選�
 
 確定要件:
 - 翻訳方向: 英語 → 日本語（言語は設定で変更可能な作り）
-- **完全無料**（API キー・クレジットカード不要）。翻訳バックエンドは差し替え可能。
+- 翻訳は**公式 API のみ**を使う。既定は **Google Cloud Translation**（API キー必要・月 50 万文字まで無料・課金アカウント要）。
+  非公式エンドポイント（キー不要の `client=gtx` 等）は IP 単位で bot ブロックされ規約上も想定外なので使わない（2026-09 に廃止）。
+  翻訳バックエンドは差し替え可能。
 - トリガー: 範囲選択（ホットキー or トレイ）→ **自動翻訳**。専用の翻訳ホットキーは持たない。常時監視はしない。
 - オーバーレイは操作可能（ドラッグで移動・位置を保存して次回も使用、× / 右クリック / Esc で閉じる）。
 - 開発: 厳格な TDD
@@ -15,7 +17,7 @@ Windows 11 デスクトップアプリ。画面上で**範囲をドラッグ選�
 ## 技術スタック
 - Python **3.12** / GUI: **PySide6** / キャプチャ: **mss** / 画像: **Pillow**
 - OCR: **PyWinRT**（`winrt-Windows.Media.Ocr` ほか namespace パッケージを直接使用。`winocr`/旧 `winrt` は使わない）
-- 翻訳: **Google 無料 `client=gtx` API**（既定・キー不要）/ DeepL API v2（任意）/ Gemini（任意・Vision 対応）。いずれも **requests** で直接呼ぶ（`adapters/http.py` の共通注入口 `HttpPost`）
+- 翻訳: **Google Cloud Translation API v2**（既定・API キー）/ DeepL API v2（任意）/ Gemini（任意・Vision 対応）。いずれも **requests** で直接呼ぶ（`adapters/http.py` の共通注入口 `HttpPost`）
 - ホットキー: **pynput**（`GlobalHotKeys`）→ Qt シグナルへブリッジ
 - テスト: **pytest** + pytest-mock + pytest-qt + pytest-cov / Lint・整形: **ruff**
 
@@ -70,13 +72,16 @@ pip install -e ".[dev]"
 遅延 import の都合で hidden import を明示している: winrt は `collect_all("winrt")`、`mss`/`PIL.Image`/`pynput` を hiddenimports に追加（`requests` はモジュール先頭 import なので自動検出）。アイコンは `assets\sniplingo.ico`。
 
 ## 翻訳バックエンドの挙動
-1. 既定 **Google 無料**（`translate.googleapis.com` の `client=gtx`・キー不要）。deep-translator の `GoogleTranslator` は `translate.google.com/m` をスクレイピングし IP 単位で CAPTCHA ブロック(429)されやすいため使わない。
-2. **DeepL / Gemini** は任意。`%APPDATA%\SnipLingo\config.json` にキーがある時のみ有効化。
-3. 順序は `core/backend_plan.py`: `default_backend`（キー無しなら Google）→ Google → DeepL（キー設定済みのみ）。
+1. 既定 **Google Cloud Translation v2 (Basic)**（`translation.googleapis.com/language/translate/v2`、キーは `X-Goog-Api-Key` ヘッダ、`format=text`）。
+   v3 は OAuth/サービスアカウント必須なので使わない。非公式の `client=gtx` / `translate.google.com/m` は bot ブロックされるため廃止済み。
+2. すべてのバックエンドがキー必須。`%APPDATA%\SnipLingo\config.json` にキーがある時のみ有効化。
+   どれも未設定なら翻訳を実行せず、通知して設定ダイアログを開く（`BackendPlan.is_empty`）。
+3. 順序は `core/backend_plan.py`: `default_backend`（キー無しならスキップ）→ Google Cloud → DeepL（キー設定済みのみ）。
    **Gemini はフォールバックにしない**（既定バックエンドに選んだときだけ使う）。
-   `gemini` が既定なら画像を直接 Gemini へ（Vision）、失敗時は Gemini を除くテキストチェーンへ。
+   `gemini` が既定なら画像を直接 Gemini へ（Vision）、失敗時は Gemini を除くテキストチェーンへ（無ければ失敗を返す）。
 4. 失敗の分類（`adapters/http.py`）: 通信エラー・408/429/5xx = `TranslationError`（バックオフ 1 回リトライ）、
-   その他 4xx（キー不正 403・クォータ 456 等）= `PermanentTranslationError`（リトライせず次へ）。
+   その他 4xx（キー不正 400/403・API 無効 403・クォータ 456 等）= `PermanentTranslationError`（リトライせず次へ）。
+   エラー時は API の `error.message` / `message` を通知・ログに含める（`secrets=` で渡したキーは `****`）。
    全滅時は全バックエンドの失敗理由をまとめた FAILED 結果を返す（`TranslationResult.attempts` に全試行を記録）。
    オフライン翻訳（Argos）は廃止済み。
 キーの扱いは **`.claude/rules/secrets.md`** を厳守（リポジトリに置かない・ログに出さない）。

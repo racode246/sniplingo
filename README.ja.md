@@ -7,9 +7,9 @@ Windows 11 デスクトップアプリ。画面上で**範囲をドラッグ選�
 主にゲーム内テキストの翻訳が目的です（ボーダーレス/ウィンドウモードのゲーム対象。排他的フルスクリーンは非対応）。
 
 ## 特徴
-- **完全無料**（APIキー・クレジットカード不要）。
-  - 既定: Google 無料エンドポイント（`translate.googleapis.com` の `client=gtx`・キー不要）
-  - 失敗時: 短いバックオフで 1 回リトライした後、Google 無料 / DeepL（キー設定時）へ自動フォールバック。
+- **公式 API で翻訳**。
+  - 既定: **Google Cloud Translation**（API キーが必要。月 50 万文字まで無料。下記「API キーを用意する」参照）
+  - 失敗時: 短いバックオフで 1 回リトライした後、Google Cloud / DeepL（キー設定時）へ自動フォールバック。
     キー不正・クォータ超過などの恒久的エラーはリトライせず即座に次へ。Gemini はフォールバックに使いません
   - DeepL / **Gemini** は任意（キーを設定したときだけ有効。Gemini は [Google AI Studio](https://aistudio.google.com/apikey) で無料発行可）
 - OCR は Windows 標準（無料・キー不要）。英語→日本語（言語は設定で変更可能な作り）。
@@ -26,11 +26,23 @@ py -3.12 -m venv .venv
 pip install -e ".[dev]"
 ```
 
+## Google Cloud Translation の API キーを用意する
+翻訳には Google 公式の **Cloud Translation API** を使います（初回のみ設定）。
+1. [Google Cloud Console](https://console.cloud.google.com/) でプロジェクトを作成（または既存を選択）。
+2. **お支払い（課金アカウント）** を有効にする。Cloud Translation は **月 50 万文字まで無料**で、超えた分だけ課金されます。
+3. 「API とサービス」→「ライブラリ」で **Cloud Translation API** を有効にする。
+4. 「API とサービス」→「認証情報」→「認証情報を作成」→ **API キー**。作成したキーは
+   **「API の制限」で Cloud Translation API のみに制限**しておくと、漏れたときの被害を抑えられます。
+5. SnipLingo のトレイ →「翻訳設定…」→ **Google Cloud APIキー** に貼り付けて OK。
+
+キーは `%APPDATA%\SnipLingo\config.json` にだけ保存され、ログには `****` で出力されます。
+使いすぎが心配なら、Cloud Console の「割り当て」で 1 日あたりの文字数上限を設定できます。
+
 ## 起動と操作
 ```powershell
 .\.venv\Scripts\python.exe -m sniplingo.ui.main      # または gui-script: sniplingo
 ```
-1. 起動するとタスクトレイに常駐します（アイコン「訳」）。
+1. 起動するとタスクトレイに常駐します（アイコン「訳」）。API キーが未設定なら、翻訳の代わりに設定画面が開きます。
 2. **範囲選択 → 自動翻訳**: **範囲選択ホットキー（既定 `Ctrl+Alt+R`）** か トレイの **「範囲を選択して翻訳」** で
    領域をドラッグ選択（`Esc` でキャンセル）すると、**その場で翻訳**され透過オーバーレイに表示されます。
 3. **オーバーレイ操作**:
@@ -50,7 +62,8 @@ pip install -e ".[dev]"
 |---|---|---|
 | `source_lang` / `target_lang` | `en` / `ja` | 翻訳の言語方向 |
 | `select_region_hotkey` | `<ctrl>+<alt>+r` | 範囲選択（→自動翻訳）のホットキー（pynput 形式） |
-| `default_backend` | `google_free` | `google_free` / `deepl` / `gemini`（キー未設定なら `google_free` を使用） |
+| `default_backend` | `google_cloud` | `google_cloud` / `deepl` / `gemini`（キー未設定のものは使われない） |
+| `google_cloud_api_key` | `null` | Google Cloud Translation の API キー（ログに出力されません） |
 | `deepl_api_key` | `null` | 設定時のみ DeepL が有効（ログに出力されません） |
 | `gemini_api_key` | `null` | 設定時のみ Gemini が有効（ログに出力されません） |
 | `gemini_model` | `gemini-2.5-flash` | 使用する Gemini モデル名（例: `gemini-2.5-flash-lite`, `gemini-2.5-pro`） |
@@ -59,7 +72,7 @@ pip install -e ".[dev]"
 | `capture_padding` | `8` | 選択範囲の周囲に余分に取り込むピクセル数 0〜64（端の文字の欠け防止） |
 | `ocr_scale` | `2` | OCR 前の拡大倍率 1〜4 |
 
-**フォールバック順**: `default_backend` → Google 無料 → DeepL（キー設定時のみ）。
+**フォールバック順**: `default_backend` → Google Cloud → DeepL（キー設定済みのものだけ）。
 Gemini はフォールバックにせず、`default_backend` に選んだときだけ使います。
 `gemini` を既定にするとキャプチャ画像を Gemini に直接渡し（Vision）、失敗時は Gemini を除いた OCR＋テキスト翻訳で再試行します。
 
@@ -98,7 +111,8 @@ $env:QT_QPA_PLATFORM="offscreen"; .\.venv\Scripts\python.exe -m pytest tests/int
   Add-WindowsCapability -Online -Name "Language.OCR~~~en-US~0.0.1.0"
   ```
 - **翻訳されない / 「失敗」表示**: 通知に「試したバックエンドと各失敗理由」が出ます（詳細はトレイ →「ログフォルダを開く」）。
-  DeepL のキーを設定しておくと、Google が失敗したときの自動フォールバック先になります。
+  よくある原因: キーの誤り（HTTP 400）、Cloud Translation API が未有効化・課金未設定（HTTP 403。通知に Google の説明が出ます）。
+  DeepL のキーを設定しておくと、Google Cloud が失敗したときの自動フォールバック先になります。
 - **オーバーレイがゲームに隠れる**: ゲームを**ボーダーレス/ウィンドウ**モードにしてください（排他的フルスクリーンは非対応）。
 - **ホットキーが効かない**: トレイの「範囲を選択して翻訳」で代替できます。常駐ソフトとのキー競合時はトレイの「範囲選択のショートカットを設定…」（または `config.json` の `select_region_hotkey`）を変更してください。
 

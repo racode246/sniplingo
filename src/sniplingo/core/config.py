@@ -3,7 +3,7 @@
 The config file lives in the user area (``%APPDATA%\\SnipLingo\\config.json``) and is
 treated as untrusted on load: wrong types *and* out-of-range values fall back to the
 field default, unknown keys are ignored, and corrupt JSON never crashes the app.
-Optional API keys (DeepL / Gemini) are masked by :meth:`AppConfig.redacted` so they
+API keys (Google Cloud / DeepL / Gemini) are masked by :meth:`AppConfig.redacted` so they
 never reach logs. See ``.claude/rules/secrets.md``.
 
 Serialization is driven by the field *types*: adding a field only needs the dataclass
@@ -32,7 +32,8 @@ class AppConfig:
     source_lang: str = "en"
     target_lang: str = "ja"
     select_region_hotkey: str = "<ctrl>+<alt>+r"
-    default_backend: BackendName = BackendName.GOOGLE_FREE
+    default_backend: BackendName = BackendName.GOOGLE_CLOUD
+    google_cloud_api_key: str | None = None
     deepl_api_key: str | None = None
     gemini_api_key: str | None = None
     gemini_model: str = _DEFAULT_GEMINI_MODEL
@@ -41,6 +42,10 @@ class AppConfig:
     overlay_position: tuple[int, int] | None = None
     capture_padding: int = 8  # extra pixels grabbed around the selection so OCR keeps a margin
     ocr_scale: int = 2  # upscale factor applied before OCR; helps small/low-contrast text
+
+    @property
+    def has_google_cloud(self) -> bool:
+        return bool(self.google_cloud_api_key)
 
     @property
     def has_deepl(self) -> bool:
@@ -83,7 +88,7 @@ class AppConfig:
         return cls(**values)
 
 
-SECRET_FIELDS: tuple[str, ...] = ("deepl_api_key", "gemini_api_key")
+SECRET_FIELDS: tuple[str, ...] = ("google_cloud_api_key", "deepl_api_key", "gemini_api_key")
 
 
 def default_config_path() -> Path:

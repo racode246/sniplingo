@@ -8,7 +8,9 @@ from sniplingo.domain.models import BackendName
 def _form(**kw) -> SettingsForm:
     """Build a form with all fields explicit; tests override what they care about."""
     defaults = dict(
-        default_backend="google_free",
+        default_backend="google_cloud",
+        google_cloud_key_input="",
+        google_cloud_clear=False,
         deepl_key_input="",
         deepl_clear=False,
         gemini_key_input="",
@@ -107,3 +109,16 @@ def test_from_existing_helper_seeds_form_with_current_values():
     assert form.gemini_key_input == ""
     assert form.deepl_clear is False
     assert form.gemini_clear is False
+
+
+def test_google_cloud_key_follows_the_three_state_rule():
+    base = AppConfig(google_cloud_api_key="old")
+    assert apply_settings(base, _form()).google_cloud_api_key == "old"
+    assert apply_settings(base, _form(google_cloud_key_input="new")).google_cloud_api_key == "new"
+    assert apply_settings(base, _form(google_cloud_clear=True)).google_cloud_api_key is None
+
+
+def test_form_never_prefills_the_google_cloud_key():
+    form = SettingsForm.from_config(AppConfig(google_cloud_api_key="secret"))
+    assert form.google_cloud_key_input == ""
+    assert form.google_cloud_clear is False

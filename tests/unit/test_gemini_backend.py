@@ -199,3 +199,12 @@ def test_rate_limit_is_transient_but_bad_key_is_permanent():
     bad_key = GeminiTranslator(api_key="k", post=_post({"error": "denied"}, status=403))
     with pytest.raises(PermanentTranslationError):
         bad_key.translate("hi", "en", "ja")
+
+
+def test_error_message_from_api_is_surfaced_with_key_masked():
+    body = {"error": {"message": "API key not valid: gemini-secret-key"}}
+    backend = GeminiTranslator(api_key="gemini-secret-key", post=_post(body, status=400))
+    with pytest.raises(PermanentTranslationError) as info:
+        backend.translate("hi", "en", "ja")
+    assert "API key not valid" in str(info.value)
+    assert "gemini-secret-key" not in str(info.value)

@@ -23,6 +23,8 @@ class SettingsForm:
     """
 
     default_backend: str
+    google_cloud_key_input: str
+    google_cloud_clear: bool
     deepl_key_input: str
     deepl_clear: bool
     gemini_key_input: str
@@ -34,6 +36,8 @@ class SettingsForm:
         """Seed the form from the current config (secret inputs always start blank)."""
         return cls(
             default_backend=config.default_backend.value,
+            google_cloud_key_input="",
+            google_cloud_clear=False,
             deepl_key_input="",
             deepl_clear=False,
             gemini_key_input="",
@@ -47,6 +51,9 @@ def apply_settings(config: AppConfig, form: SettingsForm) -> AppConfig:
     return replace(
         config,
         default_backend=_resolve_backend(config.default_backend, form.default_backend),
+        google_cloud_api_key=_resolve_key(
+            config.google_cloud_api_key, form.google_cloud_key_input, form.google_cloud_clear
+        ),
         deepl_api_key=_resolve_key(config.deepl_api_key, form.deepl_key_input, form.deepl_clear),
         gemini_api_key=_resolve_key(
             config.gemini_api_key, form.gemini_key_input, form.gemini_clear

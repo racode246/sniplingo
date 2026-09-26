@@ -7,9 +7,10 @@ Two paths:
 - **Vision**: when an :class:`ImageTranslator` is provided (e.g. Gemini), the
   captured image is sent directly for combined OCR + translation, skipping
   Windows OCR and any text post-processing. This is the fast / high-quality path.
-- **Text**: otherwise (or if Vision fails), Windows OCR extracts text, the
-  cleaned lines are joined with ``\\n`` and sent to the :class:`Translator` chain
-  in a single round-trip.
+- **Text**: otherwise (or if Vision fails and a text translator exists), Windows
+  OCR extracts text, the cleaned lines are joined with ``\\n`` and sent to the
+  :class:`Translator` chain in a single round-trip. ``translator`` may be ``None``
+  for a Vision-only setup.
 
 Expected failures never raise: capture / OCR errors become a FAILED result and a
 failed Vision attempt is recorded in :attr:`TranslationResult.attempts`.
@@ -41,12 +42,14 @@ class TranslationPipeline:
         self,
         capturer: ScreenCapturer,
         ocr: OcrEngine,
-        translator: Translator,
+        translator: Translator | None,
         source: str = "en",
         target: str = "ja",
         image_translator: ImageTranslator | None = None,
         capture_padding: int = DEFAULT_CAPTURE_PADDING,
     ) -> None:
+        if translator is None and image_translator is None:
+            raise ValueError("TranslationPipeline needs a text or an image translator")
         self._capturer = capturer
         self._ocr = ocr
         self._translator = translator
@@ -71,10 +74,12 @@ class TranslationPipeline:
             try:
                 result = self._image_translator.translate_image(image, self._source, self._target)
             except TranslationError as exc:
-                logger.warning("%s failed, falling back to OCR + text: %s", label, exc)
+                logger.warning("%s failed: %s", label, exc)
                 vision_attempts = (BackendAttempt(label, str(exc)),)
             else:
                 return replace(result, attempts=(BackendAttempt(label),))
+            if self._translator is None:  # Vision-only setup: nothing to fall back to
+                return self._failed("", str(vision_attempts[0].error), vision_attempts)
 
         try:
             ocr_result = self._ocr.recognize(image, self._source)
