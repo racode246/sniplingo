@@ -53,6 +53,7 @@ markers = [
     "network: requires network access (+ SNIPLINGO_GOOGLE_CLOUD_API_KEY for Cloud tests)",
     "display: requires a display / desktop session (mss capture)",
     "qt: requires a Qt environment (pytest-qt)",
+    "windows_credential: reads/writes the real Windows Credential Manager (test-only targets)",
 ]
 
 [tool.coverage.run]

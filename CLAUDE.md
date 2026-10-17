@@ -57,6 +57,9 @@ pip install -e ".[dev]"
 .\.venv\Scripts\python.exe -m pytest -q                  # 既定 = tests/unit
 .\.venv\Scripts\python.exe -m ruff check . ; .\.venv\Scripts\python.exe -m ruff format .
 
+# 資格情報マネージャー adapter（テスト専用ターゲットを作成→削除）
+.\.venv\Scripts\python.exe -m pytest tests/integration/test_windows_credential_store_real.py -m windows_credential
+
 # OCR 正解コーパス（tests/data/ocr の全ペアを実 OCR で検証・スコア一覧表示）
 .\.venv\Scripts\python.exe -m pytest tests/integration/test_ocr_corpus_real.py -m windows_ocr
 
@@ -74,7 +77,7 @@ pip install -e ".[dev]"
 ## 翻訳バックエンドの挙動
 1. 既定 **Google Cloud Translation v2 (Basic)**（`translation.googleapis.com/language/translate/v2`、キーは `X-Goog-Api-Key` ヘッダ、`format=text`）。
    v3 は OAuth/サービスアカウント必須なので使わない。非公式の `client=gtx` / `translate.google.com/m` は bot ブロックされるため廃止済み。
-2. すべてのバックエンドがキー必須。`%APPDATA%\SnipLingo\config.json` にキーがある時のみ有効化。
+2. すべてのバックエンドがキー必須。キーが設定済み（**Windows 資格情報マネージャー**に保存済み）の時のみ有効化。
    どれも未設定なら翻訳を実行せず、通知して設定ダイアログを開く（`BackendPlan.is_empty`）。
 3. 順序は `core/backend_plan.py`: `default_backend`（キー無しならスキップ）→ Google Cloud → DeepL（キー設定済みのみ）。
    **Gemini はフォールバックにしない**（既定バックエンドに選んだときだけ使う）。
@@ -84,7 +87,10 @@ pip install -e ".[dev]"
    エラー時は API の `error.message` / `message` を通知・ログに含める（`secrets=` で渡したキーは `****`）。
    全滅時は全バックエンドの失敗理由をまとめた FAILED 結果を返す（`TranslationResult.attempts` に全試行を記録）。
    オフライン翻訳（Argos）は廃止済み。
-キーの扱いは **`.claude/rules/secrets.md`** を厳守（リポジトリに置かない・ログに出さない）。
+キーの扱いは **`.claude/rules/secrets.md`** を厳守（リポジトリに置かない・ログに出さない・config.json に書かない）。
+キーの保存先は資格情報マネージャー（`adapters/windows_credential_store.py`、ターゲット名 `SnipLingo:<field>`）。
+起動時の読み込みと旧 config.json 平文キーの移行、設定保存時の書き込みは `core/secret_sync.py`。
+保存に失敗したキーは**メモリにも保持せず**、理由をトレイ通知・ログに出す。
 
 ## ログ
 `%APPDATA%\SnipLingo\logs\sniplingo.log`（1MB×3 ローテーション、トレイ「ログフォルダを開く」）。`sniplingo.*` ロガーのみ。

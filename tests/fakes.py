@@ -6,6 +6,7 @@ Used by `core` unit tests so they stay free of real Windows / network / Qt deps
 
 from __future__ import annotations
 
+from sniplingo.domain.errors import SecretStoreError
 from sniplingo.domain.models import OcrResult, Region, TranslationResult
 
 
@@ -138,3 +139,35 @@ class FakeHttpPost:
     @property
     def last(self) -> dict:
         return self.calls[-1]
+
+
+class FakeSecretStore:
+    """An in-memory `SecretStore`; `fail_on` makes chosen (operation, name) pairs raise."""
+
+    def __init__(
+        self,
+        secrets: dict[str, str] | None = None,
+        fail_on: set[tuple[str, str]] | None = None,
+        reason: str = "store unavailable",
+    ) -> None:
+        self.secrets = dict(secrets or {})
+        self.fail_on = fail_on or set()
+        self.reason = reason
+        self.calls: list[tuple[str, str]] = []
+
+    def _check(self, op: str, name: str) -> None:
+        self.calls.append((op, name))
+        if (op, name) in self.fail_on:
+            raise SecretStoreError(self.reason)
+
+    def get(self, name: str) -> str | None:
+        self._check("get", name)
+        return self.secrets.get(name)
+
+    def set(self, name: str, value: str) -> None:
+        self._check("set", name)
+        self.secrets[name] = value
+
+    def delete(self, name: str) -> None:
+        self._check("delete", name)
+        self.secrets.pop(name, None)

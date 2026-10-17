@@ -35,8 +35,10 @@ pip install -e ".[dev]"
    **「API の制限」で Cloud Translation API のみに制限**しておくと、漏れたときの被害を抑えられます。
 5. SnipLingo のトレイ →「翻訳設定…」→ **Google Cloud APIキー** に貼り付けて OK。
 
-キーは `%APPDATA%\SnipLingo\config.json` にだけ保存され、ログには `****` で出力されます。
-使いすぎが心配なら、Cloud Console の「割り当て」で 1 日あたりの文字数上限を設定できます。
+キーはログには `****` で出力されます。
+使いすぎが心配なら、Cloud Console の「割り当てとシステム上限」で **`v2 and v3 general model characters per day`**
+（1 日あたりの文字数、既定は大きな値）を下げておくと請求の上限になります。
+例えば **16,000** にすると、毎日上限まで使っても月 50 万文字（無料枠）に収まります。
 
 ## 起動と操作
 ```powershell
@@ -56,16 +58,13 @@ pip install -e ".[dev]"
    各バックエンドの試行と失敗理由が記録されます（API キーはマスク）。詳細が必要なら環境変数 `SNIPLINGO_LOG_LEVEL=DEBUG`。
 
 ## 設定
-設定は **`%APPDATA%\SnipLingo\config.json`** に保存されます（リポジトリには置きません）。型違い・範囲外の値は既定値に戻ります。主な項目:
+設定は **`%APPDATA%\SnipLingo\config.json`** に保存されます（リポジトリには置きません）。型違い・範囲外の値は既定値に戻ります。API キーはトレイの「翻訳設定…」で設定します。主な項目:
 
 | キー | 既定 | 説明 |
 |---|---|---|
 | `source_lang` / `target_lang` | `en` / `ja` | 翻訳の言語方向 |
 | `select_region_hotkey` | `<ctrl>+<alt>+r` | 範囲選択（→自動翻訳）のホットキー（pynput 形式） |
 | `default_backend` | `google_cloud` | `google_cloud` / `deepl` / `gemini`（キー未設定のものは使われない） |
-| `google_cloud_api_key` | `null` | Google Cloud Translation の API キー（ログに出力されません） |
-| `deepl_api_key` | `null` | 設定時のみ DeepL が有効（ログに出力されません） |
-| `gemini_api_key` | `null` | 設定時のみ Gemini が有効（ログに出力されません） |
 | `gemini_model` | `gemini-2.5-flash` | 使用する Gemini モデル名（例: `gemini-2.5-flash-lite`, `gemini-2.5-pro`） |
 | `overlay_opacity` | `0.85` | オーバーレイの不透明度 0.1〜1.0（フォントは 16px 固定） |
 | `overlay_position` | `null` | オーバーレイをドラッグした位置 `[x, y]`（未設定なら範囲の下に表示） |
