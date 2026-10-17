@@ -7,6 +7,10 @@ this module only turns that plan into concrete adapters.
 
 Flow: pick a region (hotkey or tray) -> it is translated automatically -> the result
 is shown in a draggable overlay. There is no separate translate hotkey.
+
+API keys live in the Windows Credential Manager, not in config.json: they are loaded (and
+legacy plaintext keys migrated) at startup by :func:`core.secret_sync.load_secrets` and
+written on settings save by :func:`core.secret_sync.persist_secrets`.
 """
 
 from __future__ import annotations
@@ -25,13 +29,16 @@ from sniplingo.adapters.deepl_backend import DeepLTranslator
 from sniplingo.adapters.gemini_backend import GeminiTranslator
 from sniplingo.adapters.google_cloud_backend import GoogleCloudTranslator
 from sniplingo.adapters.mss_capturer import MssCapturer
+from sniplingo.adapters.windows_credential_store import WindowsCredentialStore
 from sniplingo.adapters.winrt_ocr import WinRtOcrEngine
 from sniplingo.core.backend_plan import plan_backends
 from sniplingo.core.config import AppConfig, default_config_path, load_config, save_config
 from sniplingo.core.pipeline import TranslationPipeline
+from sniplingo.core.secret_sync import load_secrets, persist_secrets
 from sniplingo.core.settings_update import apply_settings
 from sniplingo.core.translator_chain import TranslatorChain
 from sniplingo.domain.models import BackendName, Region, ResultStatus, TranslationResult
+from sniplingo.ports.secret_store import SecretStore
 from sniplingo.ports.translate import Translator
 from sniplingo.ui.hotkey import GlobalHotkey
 from sniplingo.ui.hotkey_dialog import HotkeyCaptureDialog
@@ -52,6 +59,8 @@ _NOT_CONFIGURED_TITLE = "翻訳 API キーが未設定"
 _NOT_CONFIGURED_MESSAGE = (
     "トレイの「翻訳設定…」で Google Cloud Translation の API キーを設定してください。"
 )
+_SECRET_LOAD_ERROR_TITLE = "APIキーを読み込めませんでした"
+_SECRET_SAVE_ERROR_TITLE = "APIキーを保存できませんでした"
 _OCR_INSTALL_CMD = 'Add-WindowsCapability -Online -Name "Language.OCR~~~en-US~0.0.1.0"'
 
 
@@ -78,12 +87,22 @@ def _make_translator(name: BackendName, config: AppConfig) -> Translator:
 
 class Application(QObject):
     def __init__(
-        self, config: AppConfig, config_path: Path, log_formatter: RedactingFormatter
+        self,
+        config: AppConfig,
+        config_path: Path,
+        log_formatter: RedactingFormatter,
+        secret_store: SecretStore,
+        *,
+        keep_legacy: frozenset[str] = frozenset(),
     ) -> None:
         super().__init__()
         self._config = config
         self._config_path = config_path
         self._log_formatter = log_formatter
+        self._secret_store = secret_store
+        # Secret fields whose legacy plaintext copy in config.json must survive saves
+        # because migrating it to the credential store failed (it is not used in memory).
+        self._keep_legacy = keep_legacy
 
         self._ocr = WinRtOcrEngine(scale=config.ocr_scale)
         self._capturer = MssCapturer()
@@ -141,14 +160,17 @@ class Application(QObject):
             capture_padding=config.capture_padding,
         )
 
-    def start(self) -> None:
+    def start(self, secret_errors: tuple[str, ...] = ()) -> None:
         # No startup notification on purpose. Only surface actionable problems below.
         try:
             self._hotkey.start()
         except Exception:  # noqa: BLE001 - hotkey is optional; tray still works
             logger.exception("global hotkey registration failed")
             self._tray.notify("ホットキー登録失敗", "トレイメニューから操作してください。")
-        if not self._configured:
+        if secret_errors:
+            # More specific than "not configured", and explains why a key is missing.
+            self._tray.notify(_SECRET_LOAD_ERROR_TITLE, "\n".join(secret_errors))
+        elif not self._configured:
             self._tray.notify(_NOT_CONFIGURED_TITLE, _NOT_CONFIGURED_MESSAGE)
         if not self._ocr.is_language_available(self._config.source_lang):
             logger.warning("OCR language pack missing for %r", self._config.source_lang)
@@ -206,7 +228,11 @@ class Application(QObject):
         dialog = SettingsDialog(self._config)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        self._config = apply_settings(self._config, dialog.form_values())
+        updated = apply_settings(self._config, dialog.form_values())
+        # A key the credential store rejects is dropped (not kept in memory) and reported.
+        sync = persist_secrets(self._config, updated, self._secret_store)
+        self._config = sync.config
+        self._keep_legacy -= sync.stored  # replaced/cleared: drop the old plaintext copy
         self._save_config()
         self._log_formatter.set_secrets(self._config.secrets())
         logger.info("settings changed: %s", self._config.redacted())
@@ -214,6 +240,11 @@ class Application(QObject):
         pipeline = self._build_pipeline(self._config)
         self._configured = pipeline is not None
         self._runner.set_pipeline(pipeline)
+        if sync.errors:
+            for error in sync.errors:
+                logger.warning("secret store: %s", error)
+            self._tray.notify(_SECRET_SAVE_ERROR_TITLE, "\n".join(sync.errors))
+            return
         self._tray.notify("翻訳設定", "保存しました。次の翻訳から有効になります。")
 
     def _on_open_logs(self) -> None:
@@ -246,7 +277,7 @@ class Application(QObject):
 
     def _save_config(self) -> None:
         try:
-            save_config(self._config, self._config_path)
+            save_config(self._config, self._config_path, keep_legacy=self._keep_legacy)
         except OSError:
             # Not fatal; settings stay active for this session.
             logger.warning("could not save config to %s", self._config_path, exc_info=True)
@@ -282,11 +313,29 @@ def run() -> int:
         )
         return 0
 
-    config = load_config(config_path)
+    config = load_config(config_path)  # keys found here are legacy plaintext values
     log_formatter = configure_logging(log_dir_for(config_path), secrets=config.secrets())
     install_exception_hooks()
-    logger.info("SnipLingo %s starting; config=%s", __version__, config.redacted())
+    logger.info("SnipLingo %s starting", __version__)
 
-    application = Application(config, config_path, log_formatter)
-    application.start()
+    secret_store = WindowsCredentialStore()
+    sync = load_secrets(config, secret_store)
+    config = sync.config
+    log_formatter.set_secrets(config.secrets())
+    for error in sync.errors:
+        logger.warning("secret store: %s", error)
+    if sync.stored:
+        # Legacy plaintext keys are now in the credential store: drop them from the file.
+        # Keys whose migration failed stay there so they aren't lost.
+        try:
+            save_config(config, config_path, keep_legacy=sync.failed)
+            logger.info("moved API keys to the credential store: %s", sorted(sync.stored))
+        except OSError:
+            logger.warning("could not rewrite %s after key migration", config_path, exc_info=True)
+    logger.info("config=%s", config.redacted())
+
+    application = Application(
+        config, config_path, log_formatter, secret_store, keep_legacy=sync.failed
+    )
+    application.start(sync.errors)
     return app.exec()

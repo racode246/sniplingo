@@ -3,8 +3,11 @@
 The config file lives in the user area (``%APPDATA%\\SnipLingo\\config.json``) and is
 treated as untrusted on load: wrong types *and* out-of-range values fall back to the
 field default, unknown keys are ignored, and corrupt JSON never crashes the app.
-API keys (Google Cloud / DeepL / Gemini) are masked by :meth:`AppConfig.redacted` so they
-never reach logs. See ``.claude/rules/secrets.md``.
+API keys (Google Cloud / DeepL / Gemini) are held in :class:`AppConfig` at runtime but are
+**never written** to the file: they live in the OS credential store (see
+:mod:`sniplingo.core.secret_sync`). A key still found in the file is a legacy plaintext
+value from an older version, migrated at startup. :meth:`AppConfig.redacted` masks keys
+so they never reach logs. See ``.claude/rules/secrets.md``.
 
 Serialization is driven by the field *types*: adding a field only needs the dataclass
 line (plus an entry in ``_CONSTRAINTS`` if it has a valid range). A field whose type
@@ -15,7 +18,7 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, get_type_hints
@@ -109,11 +112,34 @@ def load_config(path: str | os.PathLike[str]) -> AppConfig:
     return AppConfig.from_dict(data)
 
 
-def save_config(config: AppConfig, path: str | os.PathLike[str]) -> None:
-    """Persist config to `path` (creating parent directories)."""
+def save_config(
+    config: AppConfig, path: str | os.PathLike[str], *, keep_legacy: Iterable[str] = ()
+) -> None:
+    """Persist config to `path` (creating parent directories) — **without** API keys.
+
+    Keys belong in the OS credential store (see :mod:`sniplingo.core.secret_sync`).
+    `keep_legacy` names secret fields whose plaintext value in the *existing* file must
+    survive this write: a key whose migration to the store failed is left where it was
+    rather than lost. The value is copied from disk, never from `config`.
+    """
     target = Path(path)
+    data = {k: v for k, v in config.to_dict().items() if k not in SECRET_FIELDS}
+    data.update(_legacy_secrets(target, set(keep_legacy) & set(SECRET_FIELDS)))
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(config.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+    target.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _legacy_secrets(path: Path, names: set[str]) -> dict[str, str]:
+    """The plaintext values of `names` currently in `path` (missing/corrupt -> none)."""
+    if not names:
+        return {}
+    try:
+        existing = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(existing, dict):
+        return {}
+    return {n: v for n in names if isinstance(v := existing.get(n), str) and v}
 
 
 # --- per-type codecs ---------------------------------------------------------------

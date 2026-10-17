@@ -36,8 +36,10 @@ Translation uses Google's official **Cloud Translation API** (one-time setup).
    to Cloud Translation API only, so a leaked key can't be used for anything else.
 5. In SnipLingo: tray → "翻訳設定…" (Translation settings) → paste it into **Google Cloud APIキー** → OK.
 
-The key is stored only in `%APPDATA%\SnipLingo\config.json` and is written to logs as `****`.
-To cap spending, set a daily character quota under Quotas in the Cloud Console.
+The key is written to logs as `****`.
+To cap spending, lower **`v2 and v3 general model characters per day`** under Quotas & System Limits in the
+Cloud Console (the default is large). For example, **16,000** keeps even maximal daily use within the
+500k-characters/month free tier.
 
 ## Run & usage
 ```powershell
@@ -61,16 +63,13 @@ To cap spending, set a daily character quota under Quotas in the Cloud Console.
 
 ## Configuration
 Settings are stored in **`%APPDATA%\SnipLingo\config.json`** (never in the repo). Values of the wrong type or
-outside the valid range fall back to the default. Main keys:
+outside the valid range fall back to the default. API keys are set via the tray's "翻訳設定…". Main keys:
 
 | Key | Default | Description |
 |---|---|---|
 | `source_lang` / `target_lang` | `en` / `ja` | Translation direction |
 | `select_region_hotkey` | `<ctrl>+<alt>+r` | Region-select (→ auto-translate) hotkey (pynput format) |
 | `default_backend` | `google_cloud` | `google_cloud` / `deepl` / `gemini` (a backend without its key is skipped) |
-| `google_cloud_api_key` | `null` | Google Cloud Translation API key (never written to logs) |
-| `deepl_api_key` | `null` | Enables DeepL only when set (never written to logs) |
-| `gemini_api_key` | `null` | Enables Gemini only when set (never written to logs) |
 | `gemini_model` | `gemini-2.5-flash` | Gemini model name (e.g. `gemini-2.5-flash-lite`, `gemini-2.5-pro`) |
 | `overlay_opacity` | `0.85` | Overlay opacity, 0.1–1.0 (font is fixed at 16px) |
 | `overlay_position` | `null` | Position `[x, y]` where you dragged the overlay (anchors below the region if unset) |

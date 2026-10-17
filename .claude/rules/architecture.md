@@ -11,7 +11,7 @@ domain  ←  ports  ←  core  ←  adapters / ui
 
 - **domain** (`src/sniplingo/domain/`): 純粋ロジックとデータ型。**いかなる I/O も外部ライブラリも import しない**（標準ライブラリと自分自身のみ）。
 - **ports** (`src/sniplingo/ports/`): `Protocol` で定義したインターフェース。テストの継ぎ目（seam）。実行時の import は標準ライブラリと `domain` のみ（`PIL.Image` 等は `TYPE_CHECKING` 内で型参照）。
-- **core** (`src/sniplingo/core/`): オーケストレーションと方針（pipeline / translator_chain / backend_plan / job_gate / config / settings_update / hotkey_parse）。**`domain` と `ports` のみに依存**し、実行時は標準ライブラリのみ（`logging`・`threading` は可）。
+- **core** (`src/sniplingo/core/`): オーケストレーションと方針（pipeline / translator_chain / backend_plan / job_gate / config / secret_sync / settings_update / hotkey_parse）。**`domain` と `ports` のみに依存**し、実行時は標準ライブラリのみ（`logging`・`threading` は可）。
 - **adapters** (`src/sniplingo/adapters/`): `ports` の具体実装。**Windows / サードパーティを import してよい唯一の場所**（mss, winrt, PIL, requests）。`core`・`ui` は import しない。HTTP は `adapters/http.py` の `HttpPost` 注入口と `post_json` を共通で使う。
 - **ui** (`src/sniplingo/ui/`): PySide6・pynput。薄く保ち、処理は `core` に委譲する。adapters を import してよいのは **`ui/app.py`（composition root）だけ**。
 

@@ -3,7 +3,13 @@ import json
 
 import pytest
 
-from sniplingo.core.config import AppConfig, default_config_path, load_config, save_config
+from sniplingo.core.config import (
+    SECRET_FIELDS,
+    AppConfig,
+    default_config_path,
+    load_config,
+    save_config,
+)
 from sniplingo.domain.models import BackendName, Region
 
 
@@ -71,10 +77,69 @@ def test_overlay_position_parsing():
 
 def test_save_load_roundtrip_creates_parent_dirs(tmp_path):
     path = tmp_path / "sniplingo" / "config.json"
-    c = AppConfig(target_lang="ja", region=Region(1, 2, 3, 4), deepl_api_key="k")
+    c = AppConfig(target_lang="ja", region=Region(1, 2, 3, 4))
     save_config(c, path)
     assert path.exists()
     assert load_config(path) == c
+
+
+# --- API keys never go to config.json (they live in the OS credential store) ----------
+
+
+def test_save_config_never_writes_api_keys(tmp_path):
+    path = tmp_path / "config.json"
+    c = AppConfig(
+        google_cloud_api_key="cloud-secret", deepl_api_key="d-secret", gemini_api_key="g-secret"
+    )
+    save_config(c, path)
+    text = path.read_text(encoding="utf-8")
+    for secret in ("cloud-secret", "d-secret", "g-secret"):
+        assert secret not in text
+    assert not set(SECRET_FIELDS) & set(json.loads(text))
+    assert load_config(path).secrets() == []
+
+
+def test_save_config_drops_legacy_plaintext_keys_from_existing_file(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"deepl_api_key": "legacy"}), encoding="utf-8")
+    save_config(AppConfig(), path)
+    assert "legacy" not in path.read_text(encoding="utf-8")
+
+
+def test_save_config_keeps_requested_legacy_keys_from_existing_file(tmp_path):
+    """A key whose migration to the credential store failed stays where it was."""
+    path = tmp_path / "config.json"
+    path.write_text(
+        json.dumps({"deepl_api_key": "legacy-d", "gemini_api_key": "legacy-g"}), encoding="utf-8"
+    )
+    save_config(AppConfig(target_lang="fr"), path, keep_legacy=["deepl_api_key"])
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["deepl_api_key"] == "legacy-d"
+    assert "gemini_api_key" not in data
+    assert data["target_lang"] == "fr"
+
+
+def test_save_config_keep_legacy_ignores_missing_or_corrupt_file(tmp_path):
+    path = tmp_path / "config.json"
+    save_config(AppConfig(), path, keep_legacy=["deepl_api_key"])
+    assert "deepl_api_key" not in json.loads(path.read_text(encoding="utf-8"))
+    path.write_text("{ broken", encoding="utf-8")
+    save_config(AppConfig(), path, keep_legacy=["deepl_api_key"])
+    assert "deepl_api_key" not in json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_save_config_keep_legacy_ignores_non_string_values(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"deepl_api_key": 123}), encoding="utf-8")
+    save_config(AppConfig(), path, keep_legacy=["deepl_api_key"])
+    assert "deepl_api_key" not in json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_save_config_keep_legacy_only_applies_to_secret_fields(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"target_lang": "de"}), encoding="utf-8")
+    save_config(AppConfig(target_lang="fr"), path, keep_legacy=["target_lang"])
+    assert json.loads(path.read_text(encoding="utf-8"))["target_lang"] == "fr"
 
 
 def test_load_missing_returns_defaults(tmp_path):

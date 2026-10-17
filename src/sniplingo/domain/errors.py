@@ -33,3 +33,10 @@ class PermanentTranslationError(TranslationError):
 
     The chain skips any remaining retries for that backend and moves on immediately.
     """
+
+
+class SecretStoreError(SnipLingoError):
+    """Reading, writing or deleting a secret in the OS credential store failed.
+
+    The message explains *why* (it is shown to the user) and never contains the secret.
+    """
