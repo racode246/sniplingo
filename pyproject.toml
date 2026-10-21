@@ -16,6 +16,8 @@ dependencies = [
     "Pillow>=10.0",
     "pynput>=1.7",
     "requests>=2.31",  # translation backends (Google Cloud / DeepL / Gemini) over HTTP
+    # CA bundle used by requests; 2026.10.19 drops the eMudhra/emSign intermediates whose keys leaked.
+    "certifi>=2026.10.19",
     "winrt-Windows.Media.Ocr>=3.2.1",
     "winrt-Windows.Graphics.Imaging>=3.2.1",
     "winrt-Windows.Storage.Streams>=3.2.1",
