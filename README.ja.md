@@ -16,12 +16,12 @@ Windows 11 デスクトップアプリ。画面上で**範囲をドラッグ選�
 - ホットキーで「押した瞬間」だけ翻訳（常時監視しない＝軽い）。
 
 ## 必要環境
-- Windows 11 / Python **3.12**
+- Windows 11 / Python **3.15**
 - 英語の OCR 言語パック（多くの環境で導入済み。無い場合は下記トラブルシュート参照）
 
 ## セットアップ（開発）
 ```powershell
-py -3.12 -m venv .venv
+py -3.15 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 ```

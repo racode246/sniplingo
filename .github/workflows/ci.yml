@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   lint-and-test:
-    name: Lint & unit tests (Windows · Python 3.12)
+    name: Lint & unit tests (Windows · Python 3.15)
     # Windows runner is required: the project depends on winrt-* (PyWinRT) and PySide6,
     # which only install on Windows.
     runs-on: windows-latest
@@ -22,10 +22,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
+      - name: Set up Python 3.15
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.15"
           cache: pip
           cache-dependency-path: pyproject.toml
 

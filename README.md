@@ -17,12 +17,12 @@ in-game text (borderless / windowed games — exclusive fullscreen is not suppor
 - Translation happens on demand when you pick a region — there is no continuous polling, so it stays light.
 
 ## Requirements
-- Windows 11 / Python **3.12**
+- Windows 11 / Python **3.15**
 - The English OCR language pack (present on most systems; see Troubleshooting if missing).
 
 ## Setup (development)
 ```powershell
-py -3.12 -m venv .venv
+py -3.15 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 ```

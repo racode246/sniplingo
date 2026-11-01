@@ -1,6 +1,6 @@
 # Rule: Python スタイル
 
-- **対象バージョン**: Python 3.12（`requires-python = ">=3.12,<3.13"`）。
+- **対象バージョン**: Python 3.15（`requires-python = ">=3.15,<3.16"`）。
 - **整形 / Lint**: `ruff`。`ruff format` で整形、`ruff check` で lint（設定は `pyproject.toml` の `[tool.ruff]`）。コミット相当の区切りごとに両方を通す。
 - **型ヒント**: 公開関数・メソッドには型注釈を付ける。インターフェースは `typing.Protocol`。重い型（`PIL.Image.Image` 等）は文字列注釈 or `if TYPE_CHECKING:` で実 import を避け、境界を守る。
 - **データ型**: 値オブジェクトは `@dataclass`（不変が望ましいものは `frozen=True`）。列挙は `enum.Enum` / `StrEnum`。

@@ -133,7 +133,7 @@ def _extract_text(data: Any) -> str:
         candidates = data["candidates"]
         parts = candidates[0]["content"]["parts"]
         text = parts[0].get("text", "")
-    except (KeyError, IndexError, TypeError):
+    except KeyError, IndexError, TypeError:
         return ""
     return text.strip() if isinstance(text, str) else ""
 
