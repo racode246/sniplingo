@@ -15,7 +15,7 @@ Windows 11 デスクトップアプリ。画面上で**範囲をドラッグ選�
 - 開発: 厳格な TDD
 
 ## 技術スタック
-- Python **3.12** / GUI: **PySide6** / キャプチャ: **mss** / 画像: **Pillow**
+- Python **3.15** / GUI: **PySide6** / キャプチャ: **mss** / 画像: **Pillow**
 - OCR: **PyWinRT**（`winrt-Windows.Media.Ocr` ほか namespace パッケージを直接使用。`winocr`/旧 `winrt` は使わない）
 - 翻訳: **Google Cloud Translation API v2**（既定・API キー）/ DeepL API v2（任意）/ Gemini（任意・Vision 対応）。いずれも **requests** で直接呼ぶ（`adapters/http.py` の共通注入口 `HttpPost`）
 - ホットキー: **pynput**（`GlobalHotKeys`）→ Qt シグナルへブリッジ
@@ -49,7 +49,7 @@ pipeline/chain のテストは MagicMock ではなく **`ports` を実装した�
 すべて venv の Python を使う（`.\.venv\Scripts\python.exe`）。`Activate.ps1` 有効化時は素の `python`/`pytest`/`ruff` でも可。
 ```powershell
 # セットアップ（新規環境）
-py -3.12 -m venv .venv          # この環境の Python: C:\Users\take3\AppData\Local\Programs\Python\Python312\python.exe
+py -3.15 -m venv .venv          # この環境の Python: C:\Users\take3\AppData\Local\Programs\Python\Python315\python.exe
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 

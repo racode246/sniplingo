@@ -107,7 +107,7 @@ def load_config(path: str | os.PathLike[str]) -> AppConfig:
     try:
         text = Path(path).read_text(encoding="utf-8")
         data = json.loads(text)
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return AppConfig()
     return AppConfig.from_dict(data)
 
@@ -135,7 +135,7 @@ def _legacy_secrets(path: Path, names: set[str]) -> dict[str, str]:
         return {}
     try:
         existing = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return {}
     if not isinstance(existing, dict):
         return {}
@@ -189,7 +189,7 @@ def _parse_region(raw: Any) -> Any:
             width=int(raw["width"]),
             height=int(raw["height"]),
         )
-    except (KeyError, TypeError, ValueError):
+    except KeyError, TypeError, ValueError:
         return _INVALID
 
 
@@ -199,7 +199,7 @@ def _parse_position(raw: Any) -> Any:
     if isinstance(raw, (list, tuple)) and len(raw) == 2:
         try:
             return (int(raw[0]), int(raw[1]))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return _INVALID
     return _INVALID
 
